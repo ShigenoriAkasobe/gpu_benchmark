@@ -104,6 +104,14 @@ class GPUBenchmark:
                 
                 total_time += (end_time - start_time)
                 total_ops += 2.0 * size * size * size
+                
+                # メモリ解放
+                del a, b, c
+                cp.cuda.Device().synchronize()
+            
+            # CuPyのメモリプールを完全にクリア
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
             
             avg_time = total_time / iterations
             avg_gflops = total_ops / (total_time * 1e9)
@@ -116,6 +124,12 @@ class GPUBenchmark:
                 'iterations': iterations
             }
         except Exception as e:
+            # エラー時もメモリをクリア
+            try:
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+            except:
+                pass
             print(f"CuPy GPU テストエラー: {e}")
             return None
     
@@ -145,6 +159,13 @@ class GPUBenchmark:
                 
                 total_time += (end_time - start_time)
                 total_ops += 2.0 * size * size * size
+                
+                # メモリ解放
+                del a, b, c
+                torch.cuda.synchronize()
+            
+            # PyTorchのキャッシュをクリア
+            torch.cuda.empty_cache()
             
             avg_time = total_time / iterations
             avg_gflops = total_ops / (total_time * 1e9)
@@ -157,6 +178,11 @@ class GPUBenchmark:
                 'iterations': iterations
             }
         except Exception as e:
+            # エラー時もメモリをクリア
+            try:
+                torch.cuda.empty_cache()
+            except:
+                pass
             print(f"PyTorch GPU テストエラー: {e}")
             return None
     
@@ -178,10 +204,15 @@ class GPUBenchmark:
             
             # CPU -> GPU
             start_time = time.time()
-            gpu_array = cp.asarray(cpu_array)
+            gpu_array2 = cp.asarray(cpu_array)
             cp.cuda.Device().synchronize()
             end_time = time.time()
             cpu_to_gpu_bw = (size * 4) / (end_time - start_time) / 1e9  # GB/s
+            
+            # メモリ解放
+            del gpu_array, gpu_array2, cpu_array
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
             
             return {
                 'gpu_to_cpu_bandwidth': gpu_to_cpu_bw,
@@ -189,6 +220,12 @@ class GPUBenchmark:
                 'data_size_mb': size_mb
             }
         except Exception as e:
+            # エラー時もメモリをクリア
+            try:
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+            except:
+                pass
             print(f"メモリ帯域幅テストエラー: {e}")
             return None
     
@@ -217,13 +254,45 @@ class GPUBenchmark:
             try:
                 result = test_func()
                 benchmark_results[test_name] = result
+                
+                # 各テスト後にメモリクリーンアップ
+                if "GPU" in test_name:
+                    self.cleanup_gpu_memory()
+                    
                 time.sleep(0.5)  # 視覚的な進捗のため
             except Exception as e:
                 benchmark_results[test_name] = f"エラー: {str(e)}"
+                # エラー時もメモリクリーンアップ
+                self.cleanup_gpu_memory()
+        
+        # 最終メモリクリーンアップ
+        self.cleanup_gpu_memory()
         
         progress = 100
         is_running = False
         current_test = "完了"
+    
+    def cleanup_gpu_memory(self):
+        """GPUメモリのクリーンアップ"""
+        try:
+            # CuPyメモリプールのクリア
+            if CUDA_AVAILABLE:
+                cp.get_default_memory_pool().free_all_blocks()
+                cp.get_default_pinned_memory_pool().free_all_blocks()
+                cp.cuda.Device().synchronize()
+        except Exception as e:
+            print(f"CuPyメモリクリーンアップエラー: {e}")
+        
+        try:
+            # PyTorchキャッシュのクリア
+            if PYTORCH_AVAILABLE and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception as e:
+            print(f"PyTorchメモリクリーンアップエラー: {e}")
+        
+        # 少し待機してメモリ解放を確実にする
+        time.sleep(0.1)
 
 # ベンチマークインスタンス
 gpu_benchmark = GPUBenchmark()
