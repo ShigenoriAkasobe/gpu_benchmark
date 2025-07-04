@@ -350,6 +350,15 @@ def benchmark_status():
 def gpu_info():
     return jsonify(gpu_benchmark.get_gpu_info())
 
+@app.route('/cleanup_gpu_memory', methods=['POST'])
+def cleanup_gpu_memory():
+    """手動でGPUメモリをクリーンアップ"""
+    try:
+        gpu_benchmark.cleanup_gpu_memory()
+        return jsonify({'message': 'GPUメモリをクリーンアップしました'})
+    except Exception as e:
+        return jsonify({'error': f'メモリクリーンアップエラー: {str(e)}'})
+
 @app.route('/system_info')
 def system_info():
     return jsonify({
@@ -577,6 +586,7 @@ HTML_TEMPLATE = '''
             
             <button id="start-btn" onclick="startBenchmark()">ベンチマーク開始</button>
             <button onclick="loadSystemInfo()">システム情報更新</button>
+            <button onclick="cleanupGPUMemory()">GPUメモリクリーンアップ</button>
             
             <div id="progress-section" style="display: none;">
                 <div class="progress-bar">
@@ -733,6 +743,22 @@ HTML_TEMPLATE = '''
                     memorySizeInput.value = '1000';
                     break;
             }
+        }
+        
+        function cleanupGPUMemory() {
+            fetch('/cleanup_gpu_memory', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                    } else {
+                        alert(data.message);
+                        loadGPUInfo(); // GPU情報を更新
+                    }
+                })
+                .catch(error => {
+                    alert('メモリクリーンアップに失敗しました');
+                });
         }
         
         function updateBenchmarkStatus() {
