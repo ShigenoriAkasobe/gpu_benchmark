@@ -1,5 +1,6 @@
 import argparse
 import socket
+import subprocess
 import threading
 
 import psutil
@@ -120,6 +121,29 @@ def system_info():
             **availability,
         }
     )
+
+
+@app.route("/system_metrics")
+def system_metrics():
+
+    def get_gpu_usage():
+        try:
+            output = subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,temperature.gpu",
+                    "--format=csv,noheader,nounits",
+                ]
+            )
+            gpu_util, temp = output.decode("utf-8").strip().split(", ")
+            return {"gpu_util": int(gpu_util), "gpu_temp": int(temp)}
+        except Exception as e:
+            return {"gpu_util": None, "gpu_temp": None}
+
+    cpu = psutil.cpu_percent()
+    mem = psutil.virtual_memory()
+
+    return jsonify({"cpu_percent": cpu, "mem_percent": mem.percent, **get_gpu_usage()})
 
 
 def get_args():

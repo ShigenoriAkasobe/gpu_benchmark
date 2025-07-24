@@ -216,8 +216,91 @@ function displayResults(results) {
     document.getElementById('results-grid').innerHTML = html;
 }
 
+async function initChart() {
+    const ctx = document.getElementById('monitorChart').getContext('2d');
+
+    try {
+        const res = await fetch('/system_metrics');
+        const initialData = await res.json();
+
+        const chartConfig = {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'CPU使用率 (%)',
+                        data: [],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        fill: false,
+                        tension: 0.1,
+                    }
+                ]
+            },
+            options: {
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: { beginAtZero: true, max: 100 }
+                }
+            }
+        };
+
+        const gpuAvailable = initialData.gpu_util !== null && initialData.gpu_util !== undefined;
+        if (gpuAvailable) {
+            chartConfig.data.datasets.push({
+                label: 'GPU使用率 (%)',
+                data: [],
+                borderColor: 'rgba(255, 99, 132, 1)',
+                fill: false,
+                tension: 0.1,
+            });
+        }
+
+        const chart = new Chart(ctx, chartConfig);
+        return { chart, gpuAvailable };
+
+    } catch (err) {
+        console.error('初期化エラー:', err);
+        return { chart: null, gpuAvailable: false };
+    }
+}
+
+function startUpdateLoop(chart, gpuAvailable) {
+    const interval_seconds = 2000; // 更新間隔（ミリ秒）
+
+    setInterval(() => {
+        fetch('/system_metrics')
+            .then(res => res.json())
+            .then(data => {
+                const now = new Date().toLocaleTimeString();
+
+                // ラベル追加
+                chart.data.labels.push(now);
+
+                // CPU使用率追加
+                chart.data.datasets[0].data.push(data.cpu_percent);
+
+                // GPU使用率追加（必要であれば）
+                if (gpuAvailable) {
+                    chart.data.datasets[1].data.push(data.gpu_util);
+                }
+
+                // データ数制限
+                if (chart.data.labels.length > 60) {
+                    chart.data.labels.shift();
+                    chart.data.datasets.forEach(ds => ds.data.shift());
+                }
+
+                chart.update();
+            })
+            .catch(err => console.error('定期更新エラー:', err));
+    }, interval_seconds);
+}
+
 // 初期化処理
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    // システム情報とGPU情報の読み込み
     loadSystemInfo();
     loadGPUInfo();
 
@@ -238,4 +321,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     });
+
+    // モニターチャートの初期化・更新ループの開始
+    const { chart, gpuAvailable } = await initChart();
+    if (chart) {
+        startUpdateLoop(chart, gpuAvailable);
+    }
 });
