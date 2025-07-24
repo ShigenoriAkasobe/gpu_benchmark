@@ -10,7 +10,7 @@ function loadSystemInfo() {
                     <span class="metric-value">${data.host_name}</span>
                 </div>
                 <div class="metric">
-                    <span>CPUコア数:</span>
+                    <span>CPU論理プロセッサ数:</span>
                     <span class="metric-value">${data.cpu_count}</span>
                 </div>
                 <div class="metric">
@@ -86,6 +86,14 @@ function loadGPUInfo() {
         .catch(error => {
             document.getElementById('gpu-info').innerHTML = '<p class="error">GPU情報の取得に失敗しました</p>';
         });
+}
+
+function startUpdateGPUInfoLoop() {
+    const interval_seconds = 2000; // 更新間隔（ミリ秒）
+
+    setInterval(() => {
+        loadGPUInfo();
+    }, interval_seconds);
 }
 
 function startBenchmark() {
@@ -292,7 +300,7 @@ async function initChart() {
     }
 }
 
-function startUpdateLoop(chart, gpuAvailable) {
+function startUpdateChartLoop(chart, gpuAvailable) {
     const interval_seconds = 2000; // 更新間隔（ミリ秒）
 
     setInterval(() => {
@@ -348,6 +356,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     // モニターチャートの初期化・更新ループの開始
     const { chart, gpuAvailable } = await initChart();
     if (chart) {
-        startUpdateLoop(chart, gpuAvailable);
+        startUpdateChartLoop(chart, gpuAvailable);
+    }
+    if (gpuAvailable) {
+        startUpdateGPUInfoLoop();
     }
 });
