@@ -6,7 +6,11 @@ function loadSystemInfo() {
         .then(data => {
             document.getElementById('system-info').innerHTML = `
                 <div class="metric">
-                    <span>CPU コア数:</span>
+                    <span>ホスト名:</span>
+                    <span class="metric-value">${data.host_name}</span>
+                </div>
+                <div class="metric">
+                    <span>CPUコア数:</span>
                     <span class="metric-value">${data.cpu_count}</span>
                 </div>
                 <div class="metric">

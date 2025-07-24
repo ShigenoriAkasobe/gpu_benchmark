@@ -1,4 +1,5 @@
 import argparse
+import socket
 import threading
 
 import psutil
@@ -112,6 +113,7 @@ def system_info():
     availability = get_availability()
     return jsonify(
         {
+            "host_name": socket.gethostname(),
             "cpu_count": psutil.cpu_count(),
             "memory_total": psutil.virtual_memory().total,
             "memory_available": psutil.virtual_memory().available,
