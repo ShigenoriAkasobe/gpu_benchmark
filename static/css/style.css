@@ -186,15 +186,15 @@ button:disabled {
     .container {
         padding: 15px;
     }
-    
+
     h1 {
         font-size: 2em;
     }
-    
+
     .settings-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .results-grid {
         grid-template-columns: 1fr;
     }

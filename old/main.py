@@ -1,16 +1,18 @@
-import os
-import time
 import json
+import os
 import threading
+import time
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request
+
+import GPUtil
 import numpy as np
 import psutil
-import GPUtil
+from flask import Flask, jsonify, render_template, request
 
 # CUDAが利用可能かチェック（オプション）
 try:
     import cupy as cp
+
     CUDA_AVAILABLE = True
 except ImportError:
     CUDA_AVAILABLE = False
@@ -18,6 +20,7 @@ except ImportError:
 # PyTorchが利用可能かチェック
 try:
     import torch
+
     PYTORCH_AVAILABLE = True
 except ImportError:
     PYTORCH_AVAILABLE = False
@@ -30,10 +33,11 @@ is_running = False
 current_test = ""
 progress = 0
 
+
 class GPUBenchmark:
     def __init__(self):
         self.results = {}
-        
+
     def get_gpu_info(self):
         """GPU情報を取得"""
         gpu_info = []
@@ -41,59 +45,59 @@ class GPUBenchmark:
             gpus = GPUtil.getGPUs()
             for gpu in gpus:
                 info = {
-                    'id': gpu.id,
-                    'name': gpu.name,
-                    'driver': gpu.driver,
-                    'memory_total': gpu.memoryTotal,
-                    'memory_free': gpu.memoryFree,
-                    'memory_used': gpu.memoryUsed,
-                    'temperature': gpu.temperature,
-                    'load': gpu.load
+                    "id": gpu.id,
+                    "name": gpu.name,
+                    "driver": gpu.driver,
+                    "memory_total": gpu.memoryTotal,
+                    "memory_free": gpu.memoryFree,
+                    "memory_used": gpu.memoryUsed,
+                    "temperature": gpu.temperature,
+                    "load": gpu.load,
                 }
                 gpu_info.append(info)
         except Exception as e:
             print(f"GPU情報の取得に失敗: {e}")
-            
+
         return gpu_info
-    
+
     def cpu_matrix_multiply(self, size=2000, iterations=1):
         """CPUでの行列乗算ベンチマーク"""
         total_time = 0
         total_ops = 0
-        
+
         for i in range(iterations):
             start_time = time.time()
             a = np.random.random((size, size)).astype(np.float32)
             b = np.random.random((size, size)).astype(np.float32)
             c = np.dot(a, b)
             end_time = time.time()
-            
-            total_time += (end_time - start_time)
+
+            total_time += end_time - start_time
             total_ops += 2.0 * size * size * size
-        
+
         avg_time = total_time / iterations
         avg_gflops = total_ops / (total_time * 1e9)
-        
+
         return {
-            'time': avg_time,
-            'total_time': total_time,
-            'gflops': avg_gflops,
-            'matrix_size': size,
-            'iterations': iterations
+            "time": avg_time,
+            "total_time": total_time,
+            "gflops": avg_gflops,
+            "matrix_size": size,
+            "iterations": iterations,
         }
-    
+
     def gpu_matrix_multiply_cupy(self, size=2000, iterations=1):
         """CuPyを使用したGPU行列乗算ベンチマーク"""
         if not CUDA_AVAILABLE:
             return None
-            
+
         try:
             # GPU初期化とウォームアップ
             cp.cuda.Device().synchronize()
-            
+
             total_time = 0
             total_ops = 0
-            
+
             for i in range(iterations):
                 start_time = time.time()
                 a = cp.random.random((size, size), dtype=cp.float32)
@@ -101,27 +105,27 @@ class GPUBenchmark:
                 c = cp.dot(a, b)
                 cp.cuda.Device().synchronize()
                 end_time = time.time()
-                
-                total_time += (end_time - start_time)
+
+                total_time += end_time - start_time
                 total_ops += 2.0 * size * size * size
-                
+
                 # メモリ解放
                 del a, b, c
                 cp.cuda.Device().synchronize()
-            
+
             # CuPyのメモリプールを完全にクリア
             cp.get_default_memory_pool().free_all_blocks()
             cp.get_default_pinned_memory_pool().free_all_blocks()
-            
+
             avg_time = total_time / iterations
             avg_gflops = total_ops / (total_time * 1e9)
-            
+
             return {
-                'time': avg_time,
-                'total_time': total_time,
-                'gflops': avg_gflops,
-                'matrix_size': size,
-                'iterations': iterations
+                "time": avg_time,
+                "total_time": total_time,
+                "gflops": avg_gflops,
+                "matrix_size": size,
+                "iterations": iterations,
             }
         except Exception as e:
             # エラー時もメモリをクリア
@@ -132,23 +136,23 @@ class GPUBenchmark:
                 pass
             print(f"CuPy GPU テストエラー: {e}")
             return None
-    
+
     def gpu_matrix_multiply_torch(self, size=2000, iterations=1):
         """PyTorchを使用したGPU行列乗算ベンチマーク"""
         if not PYTORCH_AVAILABLE:
             return None
-            
+
         try:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            if device.type == 'cpu':
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if device.type == "cpu":
                 return None
-            
+
             # GPU初期化とウォームアップ
             torch.cuda.synchronize()
-            
+
             total_time = 0
             total_ops = 0
-            
+
             for i in range(iterations):
                 start_time = time.time()
                 a = torch.randn(size, size, device=device, dtype=torch.float32)
@@ -156,26 +160,26 @@ class GPUBenchmark:
                 c = torch.mm(a, b)
                 torch.cuda.synchronize()
                 end_time = time.time()
-                
-                total_time += (end_time - start_time)
+
+                total_time += end_time - start_time
                 total_ops += 2.0 * size * size * size
-                
+
                 # メモリ解放
                 del a, b, c
                 torch.cuda.synchronize()
-            
+
             # PyTorchのキャッシュをクリア
             torch.cuda.empty_cache()
-            
+
             avg_time = total_time / iterations
             avg_gflops = total_ops / (total_time * 1e9)
-            
+
             return {
-                'time': avg_time,
-                'total_time': total_time,
-                'gflops': avg_gflops,
-                'matrix_size': size,
-                'iterations': iterations
+                "time": avg_time,
+                "total_time": total_time,
+                "gflops": avg_gflops,
+                "matrix_size": size,
+                "iterations": iterations,
             }
         except Exception as e:
             # エラー時もメモリをクリア
@@ -185,15 +189,15 @@ class GPUBenchmark:
                 pass
             print(f"PyTorch GPU テストエラー: {e}")
             return None
-    
+
     def memory_bandwidth_test(self, size_mb=100):
         """メモリ帯域幅テスト"""
         if not CUDA_AVAILABLE:
             return None
-            
+
         try:
             size = int(size_mb * 1024 * 1024 / 4)  # float32要素数
-            
+
             # GPU -> CPU
             start_time = time.time()
             gpu_array = cp.random.random(size, dtype=cp.float32)
@@ -201,23 +205,23 @@ class GPUBenchmark:
             cpu_array = cp.asnumpy(gpu_array)
             end_time = time.time()
             gpu_to_cpu_bw = (size * 4) / (end_time - start_time) / 1e9  # GB/s
-            
+
             # CPU -> GPU
             start_time = time.time()
             gpu_array2 = cp.asarray(cpu_array)
             cp.cuda.Device().synchronize()
             end_time = time.time()
             cpu_to_gpu_bw = (size * 4) / (end_time - start_time) / 1e9  # GB/s
-            
+
             # メモリ解放
             del gpu_array, gpu_array2, cpu_array
             cp.get_default_memory_pool().free_all_blocks()
             cp.get_default_pinned_memory_pool().free_all_blocks()
-            
+
             return {
-                'gpu_to_cpu_bandwidth': gpu_to_cpu_bw,
-                'cpu_to_gpu_bandwidth': cpu_to_gpu_bw,
-                'data_size_mb': size_mb
+                "gpu_to_cpu_bandwidth": gpu_to_cpu_bw,
+                "cpu_to_gpu_bandwidth": cpu_to_gpu_bw,
+                "data_size_mb": size_mb,
             }
         except Exception as e:
             # エラー時もメモリをクリア
@@ -228,50 +232,53 @@ class GPUBenchmark:
                 pass
             print(f"メモリ帯域幅テストエラー: {e}")
             return None
-    
+
     def run_all_benchmarks(self, matrix_size=2000, iterations=1, memory_size=100):
         """全ベンチマークを実行"""
         global is_running, current_test, progress, benchmark_results
-        
+
         is_running = True
         progress = 0
         benchmark_results = {}
-        
+
         tests = [
             ("GPU情報取得", self.get_gpu_info),
             ("CPU行列乗算", lambda: self.cpu_matrix_multiply(matrix_size, iterations)),
             ("GPU行列乗算 (CuPy)", lambda: self.gpu_matrix_multiply_cupy(matrix_size, iterations)),
-            ("GPU行列乗算 (PyTorch)", lambda: self.gpu_matrix_multiply_torch(matrix_size, iterations)),
+            (
+                "GPU行列乗算 (PyTorch)",
+                lambda: self.gpu_matrix_multiply_torch(matrix_size, iterations),
+            ),
             ("メモリ帯域幅", lambda: self.memory_bandwidth_test(memory_size)),
         ]
-        
+
         total_tests = len(tests)
-        
+
         for i, (test_name, test_func) in enumerate(tests):
             current_test = test_name
             progress = int((i / total_tests) * 100)
-            
+
             try:
                 result = test_func()
                 benchmark_results[test_name] = result
-                
+
                 # 各テスト後にメモリクリーンアップ
                 if "GPU" in test_name:
                     self.cleanup_gpu_memory()
-                    
+
                 time.sleep(0.5)  # 視覚的な進捗のため
             except Exception as e:
                 benchmark_results[test_name] = f"エラー: {str(e)}"
                 # エラー時もメモリクリーンアップ
                 self.cleanup_gpu_memory()
-        
+
         # 最終メモリクリーンアップ
         self.cleanup_gpu_memory()
-        
+
         progress = 100
         is_running = False
         current_test = "完了"
-    
+
     def cleanup_gpu_memory(self):
         """GPUメモリのクリーンアップ"""
         try:
@@ -282,7 +289,7 @@ class GPUBenchmark:
                 cp.cuda.Device().synchronize()
         except Exception as e:
             print(f"CuPyメモリクリーンアップエラー: {e}")
-        
+
         try:
             # PyTorchキャッシュのクリア
             if PYTORCH_AVAILABLE and torch.cuda.is_available():
@@ -290,88 +297,106 @@ class GPUBenchmark:
                 torch.cuda.synchronize()
         except Exception as e:
             print(f"PyTorchメモリクリーンアップエラー: {e}")
-        
+
         # 少し待機してメモリ解放を確実にする
         time.sleep(0.1)
+
 
 # ベンチマークインスタンス
 gpu_benchmark = GPUBenchmark()
 
-@app.route('/')
-def index():
-    return render_template('index.html')
 
-@app.route('/start_benchmark', methods=['POST'])
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/start_benchmark", methods=["POST"])
 def start_benchmark():
     global is_running
-    
+
     if is_running:
-        return jsonify({'error': 'ベンチマークは既に実行中です'})
-    
+        return jsonify({"error": "ベンチマークは既に実行中です"})
+
     # パラメータを取得
     data = request.get_json() or {}
-    matrix_size = data.get('matrix_size', 2000)
-    iterations = data.get('iterations', 1)
-    memory_size = data.get('memory_size', 100)
-    
+    matrix_size = data.get("matrix_size", 2000)
+    iterations = data.get("iterations", 1)
+    memory_size = data.get("memory_size", 100)
+
     # パラメータ検証
     try:
         matrix_size = int(matrix_size)
         iterations = int(iterations)
         memory_size = int(memory_size)
-        
+
         if matrix_size < 100 or matrix_size > 20000:
-            return jsonify({'error': '行列サイズは100-20000の範囲で設定してください'})
+            return jsonify({"error": "行列サイズは100-20000の範囲で設定してください"})
         if iterations < 1 or iterations > 10:
-            return jsonify({'error': '実行回数は1-10の範囲で設定してください'})
+            return jsonify({"error": "実行回数は1-10の範囲で設定してください"})
         if memory_size < 10 or memory_size > 2000:
-            return jsonify({'error': 'メモリサイズは10-2000MBの範囲で設定してください'})
-            
+            return jsonify({"error": "メモリサイズは10-2000MBの範囲で設定してください"})
+
     except ValueError:
-        return jsonify({'error': '無効なパラメータです'})
-    
+        return jsonify({"error": "無効なパラメータです"})
+
     # 別スレッドでベンチマークを実行
-    thread = threading.Thread(target=gpu_benchmark.run_all_benchmarks, args=(matrix_size, iterations, memory_size))
+    thread = threading.Thread(
+        target=gpu_benchmark.run_all_benchmarks, args=(matrix_size, iterations, memory_size)
+    )
     thread.daemon = True
     thread.start()
-    
-    return jsonify({'message': f'ベンチマークを開始しました (行列:{matrix_size}x{matrix_size}, 回数:{iterations}, メモリ:{memory_size}MB)'})
 
-@app.route('/benchmark_status')
+    return jsonify(
+        {
+            "message": f"ベンチマークを開始しました (行列:{matrix_size}x{matrix_size}, 回数:{iterations}, メモリ:{memory_size}MB)"
+        }
+    )
+
+
+@app.route("/benchmark_status")
 def benchmark_status():
-    return jsonify({
-        'is_running': is_running,
-        'current_test': current_test,
-        'progress': progress,
-        'results': benchmark_results
-    })
+    return jsonify(
+        {
+            "is_running": is_running,
+            "current_test": current_test,
+            "progress": progress,
+            "results": benchmark_results,
+        }
+    )
 
-@app.route('/gpu_info')
+
+@app.route("/gpu_info")
 def gpu_info():
     return jsonify(gpu_benchmark.get_gpu_info())
 
-@app.route('/cleanup_gpu_memory', methods=['POST'])
+
+@app.route("/cleanup_gpu_memory", methods=["POST"])
 def cleanup_gpu_memory():
     """手動でGPUメモリをクリーンアップ"""
     try:
         gpu_benchmark.cleanup_gpu_memory()
-        return jsonify({'message': 'GPUメモリをクリーンアップしました'})
+        return jsonify({"message": "GPUメモリをクリーンアップしました"})
     except Exception as e:
-        return jsonify({'error': f'メモリクリーンアップエラー: {str(e)}'})
+        return jsonify({"error": f"メモリクリーンアップエラー: {str(e)}"})
 
-@app.route('/system_info')
+
+@app.route("/system_info")
 def system_info():
-    return jsonify({
-        'cpu_count': psutil.cpu_count(),
-        'memory_total': psutil.virtual_memory().total,
-        'memory_available': psutil.virtual_memory().available,
-        'cuda_available': CUDA_AVAILABLE,
-        'pytorch_available': PYTORCH_AVAILABLE,
-        'torch_cuda_available': torch.cuda.is_available() if PYTORCH_AVAILABLE else False
-    })
+    return jsonify(
+        {
+            "cpu_count": psutil.cpu_count(),
+            "memory_total": psutil.virtual_memory().total,
+            "memory_available": psutil.virtual_memory().available,
+            "cuda_available": CUDA_AVAILABLE,
+            "pytorch_available": PYTORCH_AVAILABLE,
+            "torch_cuda_available": torch.cuda.is_available() if PYTORCH_AVAILABLE else False,
+        }
+    )
+
 
 # HTMLテンプレート
-HTML_TEMPLATE = '''
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -540,61 +565,61 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <h1>🚀 GPU Performance Benchmark</h1>
-        
+
         <div class="info-section">
             <h2>システム情報</h2>
             <div id="system-info">
                 <p>システム情報を読み込み中...</p>
             </div>
         </div>
-        
+
         <div class="info-section">
             <h2>GPU情報</h2>
             <div id="gpu-info">
                 <p>GPU情報を読み込み中...</p>
             </div>
         </div>
-        
+
         <div class="benchmark-section">
             <h2>ベンチマーク設定</h2>
-            
+
             <div class="settings-grid">
                 <div class="setting-item">
                     <label for="matrix-size">行列サイズ (N×N):</label>
                     <input type="number" id="matrix-size" value="4000" min="100" max="20000" step="100">
                     <small>大きいほど負荷が高い (推奨: CPU 2000-4000, GPU 4000-8000)</small>
                 </div>
-                
+
                 <div class="setting-item">
                     <label for="iterations">実行回数:</label>
                     <input type="number" id="iterations" value="3" min="1" max="10">
                     <small>複数回実行して平均値を取る</small>
                 </div>
-                
+
                 <div class="setting-item">
                     <label for="memory-size">メモリテストサイズ (MB):</label>
                     <input type="number" id="memory-size" value="500" min="10" max="2000" step="10">
                     <small>メモリ帯域幅テストのデータサイズ</small>
                 </div>
             </div>
-            
+
             <div class="preset-buttons">
                 <button onclick="setPreset('light')">軽量テスト</button>
                 <button onclick="setPreset('medium')">標準テスト</button>
                 <button onclick="setPreset('heavy')">重負荷テスト</button>
             </div>
-            
+
             <button id="start-btn" onclick="startBenchmark()">ベンチマーク開始</button>
             <button onclick="loadSystemInfo()">システム情報更新</button>
             <button onclick="cleanupGPUMemory()">GPUメモリクリーンアップ</button>
-            
+
             <div id="progress-section" style="display: none;">
                 <div class="progress-bar">
                     <div class="progress-fill" id="progress-fill"></div>
                 </div>
                 <div id="current-test" class="status">準備中...</div>
             </div>
-            
+
             <div id="results-section">
                 <div class="results-grid" id="results-grid"></div>
             </div>
@@ -603,7 +628,7 @@ HTML_TEMPLATE = '''
 
     <script>
         let benchmarkInterval;
-        
+
         function loadSystemInfo() {
             fetch('/system_info')
                 .then(response => response.json())
@@ -639,7 +664,7 @@ HTML_TEMPLATE = '''
                     document.getElementById('system-info').innerHTML = '<p class="error">システム情報の取得に失敗しました</p>';
                 });
         }
-        
+
         function loadGPUInfo() {
             fetch('/gpu_info')
                 .then(response => response.json())
@@ -648,7 +673,7 @@ HTML_TEMPLATE = '''
                         document.getElementById('gpu-info').innerHTML = '<p>GPUが検出されませんでした</p>';
                         return;
                     }
-                    
+
                     let html = '';
                     data.forEach(gpu => {
                         html += `
@@ -687,18 +712,18 @@ HTML_TEMPLATE = '''
                     document.getElementById('gpu-info').innerHTML = '<p class="error">GPU情報の取得に失敗しました</p>';
                 });
         }
-        
+
         function startBenchmark() {
             const matrixSize = parseInt(document.getElementById('matrix-size').value);
             const iterations = parseInt(document.getElementById('iterations').value);
             const memorySize = parseInt(document.getElementById('memory-size').value);
-            
+
             const requestData = {
                 matrix_size: matrixSize,
                 iterations: iterations,
                 memory_size: memorySize
             };
-            
+
             fetch('/start_benchmark', {
                 method: 'POST',
                 headers: {
@@ -712,20 +737,20 @@ HTML_TEMPLATE = '''
                         alert(data.error);
                         return;
                     }
-                    
+
                     document.getElementById('start-btn').disabled = true;
                     document.getElementById('progress-section').style.display = 'block';
                     document.getElementById('results-grid').innerHTML = '';
-                    
+
                     benchmarkInterval = setInterval(updateBenchmarkStatus, 1000);
                 });
         }
-        
+
         function setPreset(preset) {
             const matrixSizeInput = document.getElementById('matrix-size');
             const iterationsInput = document.getElementById('iterations');
             const memorySizeInput = document.getElementById('memory-size');
-            
+
             switch(preset) {
                 case 'light':
                     matrixSizeInput.value = '1000';
@@ -744,7 +769,7 @@ HTML_TEMPLATE = '''
                     break;
             }
         }
-        
+
         function cleanupGPUMemory() {
             fetch('/cleanup_gpu_memory', {method: 'POST'})
                 .then(response => response.json())
@@ -760,14 +785,14 @@ HTML_TEMPLATE = '''
                     alert('メモリクリーンアップに失敗しました');
                 });
         }
-        
+
         function updateBenchmarkStatus() {
             fetch('/benchmark_status')
                 .then(response => response.json())
                 .then(data => {
                     document.getElementById('progress-fill').style.width = data.progress + '%';
                     document.getElementById('current-test').textContent = data.current_test;
-                    
+
                     if (!data.is_running) {
                         clearInterval(benchmarkInterval);
                         document.getElementById('start-btn').disabled = false;
@@ -776,10 +801,10 @@ HTML_TEMPLATE = '''
                     }
                 });
         }
-        
+
         function displayResults(results) {
             let html = '';
-            
+
             for (const [testName, result] of Object.entries(results)) {
                 if (typeof result === 'string') {
                     html += `
@@ -796,7 +821,7 @@ HTML_TEMPLATE = '''
                         <div class="result-card">
                             <h3>${testName}</h3>
                     `;
-                    
+
                     for (const [key, value] of Object.entries(result)) {
                         let displayValue = value;
                         if (typeof value === 'number') {
@@ -812,28 +837,30 @@ HTML_TEMPLATE = '''
                     html += '</div>';
                 }
             }
-            
+
             document.getElementById('results-grid').innerHTML = html;
         }
-        
+
         // 初期化
         loadSystemInfo();
         loadGPUInfo();
     </script>
 </body>
 </html>
-'''
+"""
+
 
 # HTMLテンプレートをファイルに保存
 def create_template_file():
-    template_dir = 'templates'
+    template_dir = "templates"
     if not os.path.exists(template_dir):
         os.makedirs(template_dir)
-    
-    with open(os.path.join(template_dir, 'index.html'), 'w', encoding='utf-8') as f:
+
+    with open(os.path.join(template_dir, "index.html"), "w", encoding="utf-8") as f:
         f.write(HTML_TEMPLATE)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     create_template_file()
     print("GPU Performance Benchmark WebApp")
     print("=" * 50)
@@ -847,4 +874,4 @@ if __name__ == '__main__':
     print("=" * 50)
     print("アプリケーションを起動中...")
     print("ブラウザで http://localhost:5000 にアクセスしてください")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)

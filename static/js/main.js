@@ -44,7 +44,7 @@ function loadGPUInfo() {
                 document.getElementById('gpu-info').innerHTML = '<p>GPUが検出されませんでした</p>';
                 return;
             }
-            
+
             let html = '';
             data.forEach(gpu => {
                 html += `
@@ -88,13 +88,13 @@ function startBenchmark() {
     const matrixSize = parseInt(document.getElementById('matrix-size').value);
     const iterations = parseInt(document.getElementById('iterations').value);
     const memorySize = parseInt(document.getElementById('memory-size').value);
-    
+
     const requestData = {
         matrix_size: matrixSize,
         iterations: iterations,
         memory_size: memorySize
     };
-    
+
     fetch('/start_benchmark', {
         method: 'POST',
         headers: {
@@ -108,11 +108,11 @@ function startBenchmark() {
                 alert(data.error);
                 return;
             }
-            
+
             document.getElementById('start-btn').disabled = true;
             document.getElementById('progress-section').style.display = 'block';
             document.getElementById('results-grid').innerHTML = '';
-            
+
             benchmarkInterval = setInterval(updateBenchmarkStatus, 1000);
         });
 }
@@ -121,7 +121,7 @@ function setPreset(preset) {
     const matrixSizeInput = document.getElementById('matrix-size');
     const iterationsInput = document.getElementById('iterations');
     const memorySizeInput = document.getElementById('memory-size');
-    
+
     switch(preset) {
         case 'light':
             matrixSizeInput.value = '1000';
@@ -163,7 +163,7 @@ function updateBenchmarkStatus() {
         .then(data => {
             document.getElementById('progress-fill').style.width = data.progress + '%';
             document.getElementById('current-test').textContent = data.current_test;
-            
+
             if (!data.is_running) {
                 clearInterval(benchmarkInterval);
                 document.getElementById('start-btn').disabled = false;
@@ -175,7 +175,7 @@ function updateBenchmarkStatus() {
 
 function displayResults(results) {
     let html = '';
-    
+
     for (const [testName, result] of Object.entries(results)) {
         if (typeof result === 'string') {
             html += `
@@ -192,7 +192,7 @@ function displayResults(results) {
                 <div class="result-card">
                     <h3>${testName}</h3>
             `;
-            
+
             for (const [key, value] of Object.entries(result)) {
                 let displayValue = value;
                 if (typeof value === 'number') {
@@ -208,7 +208,7 @@ function displayResults(results) {
             html += '</div>';
         }
     }
-    
+
     document.getElementById('results-grid').innerHTML = html;
 }
 
@@ -216,7 +216,7 @@ function displayResults(results) {
 document.addEventListener('DOMContentLoaded', function() {
     loadSystemInfo();
     loadGPUInfo();
-    
+
     // フォームのデフォルト送信を防ぐ
     const form = document.querySelector('form');
     if (form) {
@@ -224,7 +224,7 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
         });
     }
-    
+
     // エンターキーでのベンチマーク開始
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && e.ctrlKey) {
