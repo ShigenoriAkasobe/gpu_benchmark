@@ -223,6 +223,13 @@ function displayResults(results) {
 
 async function initChart() {
     const ctx = document.getElementById('monitorChart').getContext('2d');
+    const maxPoints = 60;
+
+    // 空のラベルを60個用意（「--:--」など）
+    const emptyLabels = Array.from({ length: maxPoints }, () => '');
+
+    // 空のデータを60個用意（初期状態では null にしておくと滑らか）
+    const emptyData = Array.from({ length: maxPoints }, () => null);
 
     try {
         const res = await fetch('/system_metrics');
@@ -231,11 +238,11 @@ async function initChart() {
         const chartConfig = {
             type: 'line',
             data: {
-                labels: [],
+                labels: emptyLabels,
                 datasets: [
                     {
                         label: 'CPU使用率 (%)',
-                        data: [],
+                        data: [...emptyData],
                         borderColor: 'rgba(75, 192, 192, 1)',
                         fill: false,
                         tension: 0.1,
@@ -244,9 +251,23 @@ async function initChart() {
             },
             options: {
                 animation: false,
+                responsive: true,
                 scales: {
-                    x: { display: false },
-                    y: { beginAtZero: true, max: 100 }
+                    x: {
+                        display: true,
+                        ticks: {
+                            maxTicksLimit: 6  // 表示数を控えめに
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true
+                    }
                 }
             }
         };
@@ -255,7 +276,7 @@ async function initChart() {
         if (gpuAvailable) {
             chartConfig.data.datasets.push({
                 label: 'GPU使用率 (%)',
-                data: [],
+                data: [...emptyData],
                 borderColor: 'rgba(255, 99, 132, 1)',
                 fill: false,
                 tension: 0.1,
@@ -280,21 +301,18 @@ function startUpdateLoop(chart, gpuAvailable) {
             .then(data => {
                 const now = new Date().toLocaleTimeString();
 
-                // ラベル追加
+                // 時間ラベルを追加
                 chart.data.labels.push(now);
+                chart.data.labels.shift();
 
-                // CPU使用率追加
+                // CPU
                 chart.data.datasets[0].data.push(data.cpu_percent);
+                chart.data.datasets[0].data.shift();
 
-                // GPU使用率追加（必要であれば）
+                // GPU
                 if (gpuAvailable) {
                     chart.data.datasets[1].data.push(data.gpu_util);
-                }
-
-                // データ数制限
-                if (chart.data.labels.length > 60) {
-                    chart.data.labels.shift();
-                    chart.data.datasets.forEach(ds => ds.data.shift());
+                    chart.data.datasets[1].data.shift();
                 }
 
                 chart.update();
