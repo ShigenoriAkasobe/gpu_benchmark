@@ -38,12 +38,12 @@
                 <div class="setting-item">
                     <label for="matrix-size">行列サイズ (N×N):</label>
                     <input type="number" id="matrix-size" value="4000" min="100" max="20000" step="100">
-                    <small>大きいほど負荷が高い (推奨: CPU 2000-4000, GPU 4000-8000)</small>
+                    <small>大きいほど負荷が高い (推奨: CPU 2000-4000, GPU 4000-20000)</small>
                 </div>
 
                 <div class="setting-item">
                     <label for="iterations">実行回数:</label>
-                    <input type="number" id="iterations" value="3" min="1" max="10">
+                    <input type="number" id="iterations" value="3" min="1" max="100">
                     <small>複数回実行して平均値を取る</small>
                 </div>
 
@@ -58,6 +58,7 @@
                 <button onclick="setPreset('light')">軽量テスト</button>
                 <button onclick="setPreset('medium')">標準テスト</button>
                 <button onclick="setPreset('heavy')">重負荷テスト</button>
+                <button onclick="setPreset('heaviest')">最重負荷テスト</button>
             </div>
 
             <button id="start-btn" onclick="startBenchmark()">ベンチマーク開始</button>

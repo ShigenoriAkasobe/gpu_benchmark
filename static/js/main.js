@@ -142,6 +142,11 @@ function setPreset(preset) {
             iterationsInput.value = '5';
             memorySizeInput.value = '1000';
             break;
+        case 'heaviest':
+            matrixSizeInput.value = '20000';
+            iterationsInput.value = '5';
+            memorySizeInput.value = '1000';
+            break;
     }
 }
 
