@@ -229,7 +229,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // エンターキーでのベンチマーク開始
+    // [Ctrl] + [Enter] でのベンチマーク開始
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && e.ctrlKey) {
             const startBtn = document.getElementById('start-btn');
