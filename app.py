@@ -1,8 +1,9 @@
-import os
+import argparse
 import threading
 from flask import Flask, render_template, jsonify, request
 import psutil
 from benchmark import GPUBenchmark, get_availability
+from waitress import serve
 
 app = Flask(__name__)
 
@@ -111,7 +112,18 @@ def system_info():
     })
 
 
-if __name__ == '__main__':
+def get_args():
+    parser = argparse.ArgumentParser(description="GPU Performance Benchmark WebApp")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Run the app in debug mode (default: False)",
+    )
+    return parser.parse_args()
+
+def show_dev_info():
+    """開発者向け情報を表示"""
     print("GPU Performance Benchmark WebApp")
     print("=" * 50)
     print("必要なライブラリ:")
@@ -122,6 +134,19 @@ if __name__ == '__main__':
     print("- cupy (CUDA GPU用、オプション)")
     print("- torch (PyTorch GPU用、オプション)")
     print("=" * 50)
+
+if __name__ == '__main__':
+    host_num = "0.0.0.0"
+    port_num = 5000
+
+    show_dev_info()
+
     print("アプリケーションを起動中...")
-    print("ブラウザで http://localhost:5000 にアクセスしてください")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print(f"ブラウザで http://localhost:{port_num} にアクセスしてください")
+
+    args = get_args()
+    if args.debug is True:
+        app.run(debug=True, host=host_num, port=port_num)
+    else:
+        serve(app, host=host_num, port=port_num)
+
