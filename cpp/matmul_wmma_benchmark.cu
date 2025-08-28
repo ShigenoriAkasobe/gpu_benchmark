@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cstring>        // for strcmp
 #include <chrono>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -204,7 +205,15 @@ double max_abs_diff(const float* A, const float* B, int N) {
 
 int main(int argc, char** argv) {
     int N = 4096; // default size (must be multiple of 16)
+    bool gpu_only = false; // flag for GPU-only benchmark
+
+    // Parse command line arguments
     if (argc >= 2) N = atoi(argv[1]);
+    if (argc >= 3 && strcmp(argv[2], "--gpu-only") == 0) {
+        gpu_only = true;
+        printf("GPU-only mode enabled (skipping CPU benchmarks)\n");
+    }
+
     if (N % 16 != 0) {
         fprintf(stderr, "N must be multiple of 16 for WMMA tiles. Given N=%d\n", N);
         return 1;
@@ -273,11 +282,16 @@ int main(int argc, char** argv) {
 
     int repeat = 3;
 
-    // --- CPU Single-Core GEMM (baseline) ---
-    printf("Running CPU single-core benchmark...\n");
+    // Variables for CPU benchmark results (will be set only if not gpu_only)
+    double avg_ms_cpu = 0.0, avg_ms_cpu_opt = 0.0, avg_ms_cpu_blas = 0.0;
+    float* h_C_cpu_blas = nullptr;
 
-    // warmup
-    matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
+    if (!gpu_only) {
+        // --- CPU Single-Core GEMM (baseline) ---
+        printf("Running CPU single-core benchmark...\n");
+
+        // warmup
+        matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
 
     auto cpu_start = high_resolution_clock::now();
     for (int i = 0; i < repeat; ++i) {
@@ -324,6 +338,10 @@ int main(int argc, char** argv) {
     double avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat;
 
     printf("CPU OpenBLAS GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_blas, repeat);
+
+    } else {
+        printf("Skipping CPU benchmarks (GPU-only mode)\n");
+    }
 
     // --- CUDA Core GEMM (naive) ---
     printf("Running CUDA naive benchmark...\n");
@@ -446,40 +464,65 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaMemcpy(h_C_cublas_tc, d_C_cublas_tc, bytes_f, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_C_wmma, d_C_wmma, bytes_f, cudaMemcpyDeviceToHost));
 
-    // verify differences (using CPU single-core as reference)
-    double maxd_cpu_cpu_opt = max_abs_diff(h_C_cpu, h_C_cpu_opt, N);
-    double maxd_cpu_cpu_blas = max_abs_diff(h_C_cpu, h_C_cpu_blas, N);
-    double maxd_cpu_cuda = max_abs_diff(h_C_cpu, h_C_cuda, N);
-    double maxd_cpu_cublas = max_abs_diff(h_C_cpu, h_C_cublas, N);
-    double maxd_cpu_cublas_tc = max_abs_diff(h_C_cpu, h_C_cublas_tc, N);
-    double maxd_cpu_wmma = max_abs_diff(h_C_cpu, h_C_wmma, N);
+    // verify differences (using CPU single-core as reference - only if CPU benchmarks were run)
+    double maxd_cpu_cpu_opt = 0.0, maxd_cpu_cpu_blas = 0.0, maxd_cpu_cuda = 0.0, maxd_cpu_cublas = 0.0, maxd_cpu_cublas_tc = 0.0, maxd_cpu_wmma = 0.0;
+
+    if (!gpu_only) {
+        maxd_cpu_cpu_opt = max_abs_diff(h_C_cpu, h_C_cpu_opt, N);
+        maxd_cpu_cpu_blas = max_abs_diff(h_C_cpu, h_C_cpu_blas, N);
+        maxd_cpu_cuda = max_abs_diff(h_C_cpu, h_C_cuda, N);
+        maxd_cpu_cublas = max_abs_diff(h_C_cpu, h_C_cublas, N);
+        maxd_cpu_cublas_tc = max_abs_diff(h_C_cpu, h_C_cublas_tc, N);
+        maxd_cpu_wmma = max_abs_diff(h_C_cpu, h_C_wmma, N);
+    }
 
     printf("\n=== Performance Summary ===\n");
-    printf("1. CPU single-core    : %8.3f ms (baseline)\n", avg_ms_cpu);
-    printf("2. CPU manual optimized: %8.3f ms (%.2fx faster than single-core)\n",
-           avg_ms_cpu_opt, avg_ms_cpu / avg_ms_cpu_opt);
-    printf("3. CPU OpenBLAS       : %8.3f ms (%.2fx faster than single-core, %.2fx vs manual)\n",
-           avg_ms_cpu_blas, avg_ms_cpu / avg_ms_cpu_blas, avg_ms_cpu_opt / avg_ms_cpu_blas);
-    printf("4. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU single-core)\n",
-           avg_ms_cuda, avg_ms_cpu / avg_ms_cuda);
-    printf("5. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than CUDA naive)\n",
-           avg_ms_cublas, avg_ms_cpu / avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
-    printf("6. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than cuBLAS)\n",
-           avg_ms_cublas_tc, avg_ms_cpu / avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
-    printf("7. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx vs cuBLAS)\n",
-           avg_ms_wmma, avg_ms_cpu / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
+    if (!gpu_only) {
+        printf("1. CPU single-core    : %8.3f ms (baseline)\n", avg_ms_cpu);
+        printf("2. CPU manual optimized: %8.3f ms (%.2fx faster than single-core)\n",
+               avg_ms_cpu_opt, avg_ms_cpu / avg_ms_cpu_opt);
+        printf("3. CPU OpenBLAS       : %8.3f ms (%.2fx faster than single-core, %.2fx vs manual)\n",
+               avg_ms_cpu_blas, avg_ms_cpu / avg_ms_cpu_blas, avg_ms_cpu_opt / avg_ms_cpu_blas);
+        printf("4. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU single-core)\n",
+               avg_ms_cuda, avg_ms_cpu / avg_ms_cuda);
+        printf("5. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than CUDA naive)\n",
+               avg_ms_cublas, avg_ms_cpu / avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
+        printf("6. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than cuBLAS)\n",
+               avg_ms_cublas_tc, avg_ms_cpu / avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
+        printf("7. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx vs cuBLAS)\n",
+               avg_ms_wmma, avg_ms_cpu / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
 
-    printf("\n=== CPU vs GPU Comparison ===\n");
-    printf("Best CPU (OpenBLAS) vs Best GPU (cuBLAS+TC): %.2fx GPU advantage\n",
-           avg_ms_cpu_blas / avg_ms_cublas_tc);
+        printf("\n=== CPU vs GPU Comparison ===\n");
+        printf("Best CPU (OpenBLAS) vs Best GPU (cuBLAS+TC): %.2fx GPU advantage\n",
+               avg_ms_cpu_blas / avg_ms_cublas_tc);
+    } else {
+        printf("GPU-only benchmark results:\n");
+        printf("1. CUDA-Core naive    : %8.3f ms\n", avg_ms_cuda);
+        printf("2. cuBLAS optimized   : %8.3f ms (%.2fx faster than CUDA naive)\n",
+               avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
+        printf("3. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than cuBLAS)\n",
+               avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
+        printf("4. WMMA manual impl   : %8.3f ms (%.2fx vs cuBLAS)\n",
+               avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
 
-    printf("\n=== Accuracy Verification (vs CPU single-core baseline) ===\n");
-    printf("Max diff (CPU single vs CPU manual opt): %e\n", maxd_cpu_cpu_opt);
-    printf("Max diff (CPU single vs CPU OpenBLAS) : %e\n", maxd_cpu_cpu_blas);
-    printf("Max diff (CPU single vs CUDA naive)   : %e\n", maxd_cpu_cuda);
-    printf("Max diff (CPU single vs cuBLAS)       : %e\n", maxd_cpu_cublas);
-    printf("Max diff (CPU single vs cuBLAS+TC)    : %e\n", maxd_cpu_cublas_tc);
-    printf("Max diff (CPU single vs WMMA)         : %e\n", maxd_cpu_wmma);
+        printf("\n=== GPU Performance Comparison ===\n");
+        printf("Best GPU (cuBLAS+TC) vs CUDA naive: %.2fx improvement\n",
+               avg_ms_cuda / avg_ms_cublas_tc);
+    }
+
+    if (!gpu_only) {
+        printf("\n=== Accuracy Verification (vs CPU single-core baseline) ===\n");
+        printf("Max diff (CPU single vs CPU manual opt): %e\n", maxd_cpu_cpu_opt);
+        printf("Max diff (CPU single vs CPU OpenBLAS) : %e\n", maxd_cpu_cpu_blas);
+        printf("Max diff (CPU single vs CUDA naive)   : %e\n", maxd_cpu_cuda);
+        printf("Max diff (CPU single vs cuBLAS)       : %e\n", maxd_cpu_cublas);
+        printf("Max diff (CPU single vs cuBLAS+TC)    : %e\n", maxd_cpu_cublas_tc);
+        printf("Max diff (CPU single vs WMMA)         : %e\n", maxd_cpu_wmma);
+    } else {
+        printf("\n=== Accuracy Verification (GPU-only mode) ===\n");
+        printf("GPU accuracy verification skipped (no CPU baseline in GPU-only mode)\n");
+        printf("Use cuBLAS as reference for GPU implementations\n");
+    }
 
     // Clean up cuBLAS
     CHECK_CUBLAS(cublasDestroy(cublasH));
@@ -490,7 +533,13 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaFree(d_Af)); CHECK_CUDA(cudaFree(d_Bf));
     CHECK_CUDA(cudaFree(d_C_cuda)); CHECK_CUDA(cudaFree(d_C_cublas)); CHECK_CUDA(cudaFree(d_C_cublas_tc)); CHECK_CUDA(cudaFree(d_C_wmma));
     CHECK_CUDA(cudaFree(d_Ah)); CHECK_CUDA(cudaFree(d_Bh));
-    free(h_A); free(h_B); free(h_C_cpu); free(h_C_cpu_opt); free(h_C_cpu_blas); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
+
+    // Free host memory (conditionally for GPU-only mode)
+    free(h_A); free(h_B); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
+    if (!gpu_only) {
+        free(h_C_cpu); free(h_C_cpu_opt);
+        if (h_C_cpu_blas) free(h_C_cpu_blas);
+    }
 
     return 0;
 }

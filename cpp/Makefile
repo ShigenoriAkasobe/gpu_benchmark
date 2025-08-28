@@ -72,9 +72,9 @@ test-medium: $(TARGET)
 
 .PHONY: test-gpu-only
 test-gpu-only: $(TARGET)
-	@echo "=== GPU-only test (2048x2048, no CPU comparison) ==="
-	@echo "Note: Skipping CPU benchmark due to performance (would take >20 minutes)"
-	./$(TARGET) 2048
+	@echo "=== GPU-only test (2048x2048, skipping CPU benchmarks) ==="
+	@echo "Note: CPU benchmarks skipped for performance (would take >20 minutes)"
+	./$(TARGET) 2048 --gpu-only
 
 # Clean build artifacts
 .PHONY: clean
