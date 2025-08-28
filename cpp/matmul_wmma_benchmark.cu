@@ -283,6 +283,12 @@ int main(int argc, char** argv) {
 
     int repeat = 3;
 
+    // Increase repeat count for small matrices to improve measurement accuracy
+    if (N <= 512) {
+        repeat = 10;
+        printf("Using %d repetitions for accurate timing of small matrices\n", repeat);
+    }
+
     // Variables for CPU benchmark results (will be set only if not gpu_only)
     double avg_ms_cpu = 0.0, avg_ms_cpu_opt = 0.0, avg_ms_cpu_blas = 0.0;
 
@@ -298,8 +304,8 @@ int main(int argc, char** argv) {
             matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
         }
         auto cpu_end = high_resolution_clock::now();
-        auto cpu_duration = duration_cast<milliseconds>(cpu_end - cpu_start);
-        avg_ms_cpu = cpu_duration.count() / (double)repeat;
+        auto cpu_duration = duration_cast<microseconds>(cpu_end - cpu_start);
+        avg_ms_cpu = cpu_duration.count() / (double)repeat / 1000.0; // Convert to ms
 
         printf("CPU single-core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu, repeat);
 
@@ -315,8 +321,8 @@ int main(int argc, char** argv) {
             matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
         }
         auto cpu_opt_end = high_resolution_clock::now();
-        auto cpu_opt_duration = duration_cast<milliseconds>(cpu_opt_end - cpu_opt_start);
-        avg_ms_cpu_opt = cpu_opt_duration.count() / (double)repeat;
+        auto cpu_opt_duration = duration_cast<microseconds>(cpu_opt_end - cpu_opt_start);
+        avg_ms_cpu_opt = cpu_opt_duration.count() / (double)repeat / 1000.0; // Convert to ms
 
         printf("CPU optimized GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_opt, repeat);
 
@@ -331,8 +337,8 @@ int main(int argc, char** argv) {
             matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
         }
         auto cpu_blas_end = high_resolution_clock::now();
-        auto cpu_blas_duration = duration_cast<milliseconds>(cpu_blas_end - cpu_blas_start);
-        avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat;
+        auto cpu_blas_duration = duration_cast<microseconds>(cpu_blas_end - cpu_blas_start);
+        avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat / 1000.0; // Convert to ms
 
         printf("CPU OpenBLAS GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_blas, repeat);
 
