@@ -79,7 +79,7 @@ void matmul_cpu_manual_optimized(const float* A, const float* B, float* C, int N
 
                             for (int k = kk; k < k_end; ++k) {
                                 __m256 a_vec = _mm256_broadcast_ss(&A[i * N + k]);
-                                __m256 b_vec = _mm256_load_ps(&B[k * N + j]);
+                                __m256 b_vec = _mm256_loadu_ps(&B[k * N + j]); // Use unaligned load
                                 sum_vec = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
                             }
 
@@ -155,12 +155,12 @@ __global__ void float_to_half_kernel(const float* in, half* out, int size) {
 __global__ void matmul_wmma(const half* A, const half* B, float* C, int N) {
     // gridDim: (N/16, N/16)
     // blockDim.x must be 32 (one warp per block in this simple mapping)
-    int warpM = blockIdx.x; // tile row index
-    int warpN = blockIdx.y; // tile col index
+    int warpM = blockIdx.y; // tile row index (row comes from y)
+    int warpN = blockIdx.x; // tile col index (col comes from x)
 
     // fragments
     wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag; // Fixed: B is also row_major
     wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc_frag;
 
     wmma::fill_fragment(acc_frag, 0.0f);
@@ -375,22 +375,25 @@ int main(int argc, char** argv) {
     const float alpha = 1.0f, beta = 0.0f;
 
     // warmup
+    // cuBLAS is column-major, so for C = A*B we need to compute B^T * A^T = (A*B)^T
+    // and get the result transposed, which gives us A*B in row-major
     CHECK_CUBLAS(cublasSgemm(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                             N, N, N,
                             &alpha,
-                            d_Bf, N,  // B matrix
-                            d_Af, N,  // A matrix
+                            d_Bf, N,  // B matrix (first in cuBLAS call)
+                            d_Af, N,  // A matrix (second in cuBLAS call)
                             &beta,
                             d_C_cublas, N));
     CHECK_CUDA(cudaDeviceSynchronize());
 
     CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < repeat; ++i) {
+        // cuBLAS column-major: compute B^T * A^T = (A*B)^T to get A*B in row-major
         CHECK_CUBLAS(cublasSgemm(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                                 N, N, N,
                                 &alpha,
-                                d_Bf, N,  // B matrix
-                                d_Af, N,  // A matrix
+                                d_Bf, N,  // B matrix (first in cuBLAS call)
+                                d_Af, N,  // A matrix (second in cuBLAS call)
                                 &beta,
                                 d_C_cublas, N));
     }
@@ -407,11 +410,12 @@ int main(int argc, char** argv) {
     const float alpha_f = 1.0f, beta_f = 0.0f;
 
     // warmup
+    // cuBLAS column-major: compute B^T * A^T = (A*B)^T to get A*B in row-major
     CHECK_CUBLAS(cublasGemmEx(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                              N, N, N,
                              &alpha_f,
-                             d_Bh, CUDA_R_16F, N,  // B matrix (FP16)
-                             d_Ah, CUDA_R_16F, N,  // A matrix (FP16)
+                             d_Bh, CUDA_R_16F, N,  // B matrix (FP16, first in cuBLAS call)
+                             d_Ah, CUDA_R_16F, N,  // A matrix (FP16, second in cuBLAS call)
                              &beta_f,
                              d_C_cublas_tc, CUDA_R_32F, N,  // C matrix (FP32)
                              CUDA_R_32F,  // Computation type
@@ -420,11 +424,12 @@ int main(int argc, char** argv) {
 
     CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < repeat; ++i) {
+        // cuBLAS column-major: compute B^T * A^T = (A*B)^T to get A*B in row-major
         CHECK_CUBLAS(cublasGemmEx(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
                                  N, N, N,
                                  &alpha_f,
-                                 d_Bh, CUDA_R_16F, N,  // B matrix (FP16)
-                                 d_Ah, CUDA_R_16F, N,  // A matrix (FP16)
+                                 d_Bh, CUDA_R_16F, N,  // B matrix (FP16, first in cuBLAS call)
+                                 d_Ah, CUDA_R_16F, N,  // A matrix (FP16, second in cuBLAS call)
                                  &beta_f,
                                  d_C_cublas_tc, CUDA_R_32F, N,  // C matrix (FP32)
                                  CUDA_R_32F,  // Computation type
@@ -440,8 +445,8 @@ int main(int argc, char** argv) {
 
     // --- WMMA Tensor Core GEMM ---
     printf("Running WMMA manual implementation benchmark...\n");
-    // grid: N/16 x N/16 (one warp per tile approach)
-    dim3 grid_wmma(N / 16, N / 16);
+    // grid: (N/16, N/16) - (cols, rows) to match blockIdx.x/y usage
+    dim3 grid_wmma(N / 16, N / 16); // (cols, rows)
     dim3 block_wmma(32, 1, 1); // one warp per block (simple mapping)
 
     // warmup
