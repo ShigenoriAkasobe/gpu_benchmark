@@ -1,10 +1,13 @@
 # Makefile for CUDA WMMA benchmark with automatic GPU architecture detection
+# 7-way performance comparison: CPU (single-core, manual optimized, OpenBLAS) vs GPU (naive CUDA, cuBLAS, cuBLAS+TensorCore, WMMA)
 
 # Configuration
 NVCC = nvcc
 TARGET = matmul_wmma_benchmark.out
 SOURCE = matmul_wmma_benchmark.cu
-LIBS = -lcublas
+LIBS = -lcublas -lopenblas
+# CPU optimization flags
+CPU_FLAGS = -fopenmp -mavx2 -mfma -O3
 
 # Auto-detect GPU architecture
 GPU_NAME := $(shell nvidia-smi --query-gpu=name --format=csv,noheader,nounits | head -1)
@@ -49,7 +52,7 @@ show-gpu-info:
 
 # Compile the CUDA program
 $(TARGET): $(SOURCE)
-	$(NVCC) $(CFLAGS) $(SOURCE) -o $(TARGET) $(LIBS)
+	$(NVCC) $(CFLAGS) $(SOURCE) -o $(TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
 
 # Run the benchmark
 .PHONY: run
@@ -101,7 +104,7 @@ check-cuda:
 .PHONY: debug
 debug: CFLAGS = -g -G -arch=$(ARCH)
 debug: show-gpu-info
-	$(NVCC) $(CFLAGS) $(SOURCE) -o $(TARGET) $(LIBS)
+	$(NVCC) $(CFLAGS) $(SOURCE) -o $(TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
 
 # Profile with nvprof (if available)
 .PHONY: profile
@@ -111,20 +114,20 @@ profile: $(TARGET)
 # Force build for specific architecture (override auto-detection)
 .PHONY: force-turing
 force-turing:
-	$(NVCC) -O3 -arch=sm_75 $(SOURCE) -o $(TARGET) $(LIBS)
+	$(NVCC) -O3 -arch=sm_75 $(SOURCE) -o $(TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
 
 .PHONY: force-ampere
 force-ampere:
-	$(NVCC) -O3 -arch=sm_80 $(SOURCE) -o $(TARGET) $(LIBS)
+	$(NVCC) -O3 -arch=sm_80 $(SOURCE) -o $(TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
 
 .PHONY: force-ada
 force-ada:
-	$(NVCC) -O3 -arch=sm_89 $(SOURCE) -o $(TARGET) $(LIBS)
+	$(NVCC) -O3 -arch=sm_89 $(SOURCE) -o $(TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
 
 # Help target
 .PHONY: help
 help:
-	@echo "CUDA WMMA Benchmark Makefile with Auto-Detection & 5-Way Comparison"
+	@echo "CUDA WMMA Benchmark Makefile with Auto-Detection & 7-Way Comparison"
 	@echo "====================================================================="
 	@echo ""
 	@echo "Available targets:"
@@ -142,10 +145,12 @@ help:
 	@echo ""
 	@echo "Comparison includes:"
 	@echo "  1. CPU single-core (baseline)"
-	@echo "  2. CUDA-Core naive"
-	@echo "  3. cuBLAS optimized"
-	@echo "  4. cuBLAS + Tensor Core"
-	@echo "  5. WMMA manual implementation"
+	@echo "  2. CPU manual optimized (OpenMP + AVX + cache blocking)"
+	@echo "  3. CPU OpenBLAS (industry-standard optimized BLAS)"
+	@echo "  4. CUDA-Core naive"
+	@echo "  5. cuBLAS optimized"
+	@echo "  6. cuBLAS + Tensor Core"
+	@echo "  7. WMMA manual implementation"
 	@echo ""
 	@echo "Force specific architecture (override auto-detection):"
 	@echo "  force-turing - Force build for Turing (sm_75)"
@@ -156,8 +161,8 @@ help:
 	@echo "  make ARCH=sm_XX  # Manually specify architecture"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make test-small # Quick 5-way comparison with small matrices"
-	@echo "  make test-medium # Medium size with CPU vs GPU comparison"
+	@echo "  make test-small # Quick 7-way comparison with small matrices"
+	@echo "  make test-medium # Medium size with optimized CPU vs GPU comparison"
 	@echo "  make run        # Full benchmark (CPU will be very slow!)"
 	@echo "  make clean all  # Clean and rebuild with auto-detection"
 	@echo "  make check-cuda # Check CUDA and show detected configuration"

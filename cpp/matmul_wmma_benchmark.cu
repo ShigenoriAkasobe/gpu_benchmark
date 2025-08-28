@@ -6,6 +6,9 @@
 #include <cuda_runtime.h>
 #include <mma.h>
 #include <cublas_v2.h>
+#include <omp.h>          // OpenMP for CPU parallelization
+#include <immintrin.h>    // AVX intrinsics
+#include <cblas.h>        // OpenBLAS for optimized CPU operations
 
 using namespace nvcuda;
 using namespace std::chrono;
@@ -41,6 +44,78 @@ void matmul_cpu_single_core(const float* A, const float* B, float* C, int N) {
             C[i * N + j] = sum;
         }
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CPU Manual Optimized GEMM (FP32) - Multi-core + SIMD + Cache blocking
+// Compute C = A * B with OpenMP + AVX + blocking (manual implementation)
+////////////////////////////////////////////////////////////////////////////////
+void matmul_cpu_manual_optimized(const float* A, const float* B, float* C, int N) {
+    const int BLOCK_SIZE = 64;  // Cache-friendly block size
+
+    // Initialize result matrix to zero
+    #pragma omp parallel for
+    for (int i = 0; i < N * N; ++i) {
+        C[i] = 0.0f;
+    }
+
+    // Blocked matrix multiplication with OpenMP parallelization
+    #pragma omp parallel for collapse(2) schedule(dynamic)
+    for (int ii = 0; ii < N; ii += BLOCK_SIZE) {
+        for (int jj = 0; jj < N; jj += BLOCK_SIZE) {
+            for (int kk = 0; kk < N; kk += BLOCK_SIZE) {
+                // Block boundaries
+                int i_end = std::min(ii + BLOCK_SIZE, N);
+                int j_end = std::min(jj + BLOCK_SIZE, N);
+                int k_end = std::min(kk + BLOCK_SIZE, N);
+
+                // Inner block computation with AVX optimization
+                for (int i = ii; i < i_end; ++i) {
+                    for (int j = jj; j < j_end; j += 8) {  // Process 8 elements at once with AVX
+                        if (j + 8 <= j_end) {
+                            // AVX vectorized inner loop
+                            __m256 sum_vec = _mm256_load_ps(&C[i * N + j]);
+
+                            for (int k = kk; k < k_end; ++k) {
+                                __m256 a_vec = _mm256_broadcast_ss(&A[i * N + k]);
+                                __m256 b_vec = _mm256_load_ps(&B[k * N + j]);
+                                sum_vec = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
+                            }
+
+                            _mm256_store_ps(&C[i * N + j], sum_vec);
+                        } else {
+                            // Handle remaining elements (non-vectorizable)
+                            for (int j_rem = j; j_rem < j_end; ++j_rem) {
+                                for (int k = kk; k < k_end; ++k) {
+                                    C[i * N + j_rem] += A[i * N + k] * B[k * N + j_rem];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CPU OpenBLAS Optimized GEMM (FP32) - Industry-standard optimized BLAS
+// Compute C = A * B using cblas_sgemm (highly optimized)
+////////////////////////////////////////////////////////////////////////////////
+void matmul_cpu_openblas(const float* A, const float* B, float* C, int N) {
+    // OpenBLAS cblas_sgemm performs: C = alpha * A * B + beta * C
+    // Parameters: (order, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
+    // CblasRowMajor: row-major storage
+    // CblasNoTrans: no transpose
+    // M=N, N=N, K=N for square matrices
+    // alpha=1.0, beta=0.0 for C = A * B
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                N, N, N,                    // M, N, K dimensions
+                1.0f,                       // alpha
+                A, N,                       // A matrix, leading dimension
+                B, N,                       // B matrix, leading dimension
+                0.0f,                       // beta
+                C, N);                      // C matrix, leading dimension
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -140,10 +215,11 @@ int main(int argc, char** argv) {
     size_t bytes_f = (size_t)N * N * sizeof(float);
     size_t bytes_h = (size_t)N * N * sizeof(half);
 
-    // host allocations
-    float* h_A = (float*)malloc(bytes_f);
-    float* h_B = (float*)malloc(bytes_f);
-    float* h_C_cpu = (float*)malloc(bytes_f);
+    // host allocations (aligned for AVX)
+    float* h_A = (float*)aligned_alloc(32, bytes_f);  // 32-byte aligned for AVX
+    float* h_B = (float*)aligned_alloc(32, bytes_f);
+    float* h_C_cpu = (float*)aligned_alloc(32, bytes_f);
+    float* h_C_cpu_opt = (float*)aligned_alloc(32, bytes_f);
     float* h_C_cuda = (float*)malloc(bytes_f);
     float* h_C_cublas = (float*)malloc(bytes_f);
     float* h_C_cublas_tc = (float*)malloc(bytes_f);
@@ -212,6 +288,42 @@ int main(int argc, char** argv) {
     double avg_ms_cpu = cpu_duration.count() / (double)repeat;
 
     printf("CPU single-core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu, repeat);
+
+    // --- CPU Optimized GEMM (Multi-core + SIMD + Cache blocking) ---
+    printf("Running CPU optimized benchmark (OpenMP + AVX)...\n");
+    printf("Using %d CPU threads\n", omp_get_max_threads());
+
+    // warmup
+    matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
+
+    auto cpu_opt_start = high_resolution_clock::now();
+    for (int i = 0; i < repeat; ++i) {
+        matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
+    }
+    auto cpu_opt_end = high_resolution_clock::now();
+    auto cpu_opt_duration = duration_cast<milliseconds>(cpu_opt_end - cpu_opt_start);
+    double avg_ms_cpu_opt = cpu_opt_duration.count() / (double)repeat;
+
+    printf("CPU optimized GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_opt, repeat);
+
+    // --- CPU OpenBLAS GEMM (Industry-standard optimized BLAS) ---
+    printf("Running CPU OpenBLAS benchmark (industry-standard BLAS)...\n");
+
+    // Allocate output buffer for OpenBLAS
+    float* h_C_cpu_blas = (float*)malloc(N * N * sizeof(float));
+
+    // warmup
+    matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
+
+    auto cpu_blas_start = high_resolution_clock::now();
+    for (int i = 0; i < repeat; ++i) {
+        matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
+    }
+    auto cpu_blas_end = high_resolution_clock::now();
+    auto cpu_blas_duration = duration_cast<milliseconds>(cpu_blas_end - cpu_blas_start);
+    double avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat;
+
+    printf("CPU OpenBLAS GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_blas, repeat);
 
     // --- CUDA Core GEMM (naive) ---
     printf("Running CUDA naive benchmark...\n");
@@ -334,7 +446,9 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaMemcpy(h_C_cublas_tc, d_C_cublas_tc, bytes_f, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_C_wmma, d_C_wmma, bytes_f, cudaMemcpyDeviceToHost));
 
-    // verify differences (using CPU as reference)
+    // verify differences (using CPU single-core as reference)
+    double maxd_cpu_cpu_opt = max_abs_diff(h_C_cpu, h_C_cpu_opt, N);
+    double maxd_cpu_cpu_blas = max_abs_diff(h_C_cpu, h_C_cpu_blas, N);
     double maxd_cpu_cuda = max_abs_diff(h_C_cpu, h_C_cuda, N);
     double maxd_cpu_cublas = max_abs_diff(h_C_cpu, h_C_cublas, N);
     double maxd_cpu_cublas_tc = max_abs_diff(h_C_cpu, h_C_cublas_tc, N);
@@ -342,20 +456,30 @@ int main(int argc, char** argv) {
 
     printf("\n=== Performance Summary ===\n");
     printf("1. CPU single-core    : %8.3f ms (baseline)\n", avg_ms_cpu);
-    printf("2. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU)\n",
+    printf("2. CPU manual optimized: %8.3f ms (%.2fx faster than single-core)\n",
+           avg_ms_cpu_opt, avg_ms_cpu / avg_ms_cpu_opt);
+    printf("3. CPU OpenBLAS       : %8.3f ms (%.2fx faster than single-core, %.2fx vs manual)\n",
+           avg_ms_cpu_blas, avg_ms_cpu / avg_ms_cpu_blas, avg_ms_cpu_opt / avg_ms_cpu_blas);
+    printf("4. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU single-core)\n",
            avg_ms_cuda, avg_ms_cpu / avg_ms_cuda);
-    printf("3. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU, %.2fx faster than CUDA naive)\n",
+    printf("5. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than CUDA naive)\n",
            avg_ms_cublas, avg_ms_cpu / avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
-    printf("4. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU, %.2fx faster than cuBLAS)\n",
+    printf("6. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than cuBLAS)\n",
            avg_ms_cublas_tc, avg_ms_cpu / avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
-    printf("5. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU, %.2fx vs cuBLAS)\n",
+    printf("7. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx vs cuBLAS)\n",
            avg_ms_wmma, avg_ms_cpu / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
 
-    printf("\n=== Accuracy Verification (vs CPU baseline) ===\n");
-    printf("Max diff (CPU vs CUDA naive)    : %e\n", maxd_cpu_cuda);
-    printf("Max diff (CPU vs cuBLAS)        : %e\n", maxd_cpu_cublas);
-    printf("Max diff (CPU vs cuBLAS+TC)     : %e\n", maxd_cpu_cublas_tc);
-    printf("Max diff (CPU vs WMMA)          : %e\n", maxd_cpu_wmma);
+    printf("\n=== CPU vs GPU Comparison ===\n");
+    printf("Best CPU (OpenBLAS) vs Best GPU (cuBLAS+TC): %.2fx GPU advantage\n",
+           avg_ms_cpu_blas / avg_ms_cublas_tc);
+
+    printf("\n=== Accuracy Verification (vs CPU single-core baseline) ===\n");
+    printf("Max diff (CPU single vs CPU manual opt): %e\n", maxd_cpu_cpu_opt);
+    printf("Max diff (CPU single vs CPU OpenBLAS) : %e\n", maxd_cpu_cpu_blas);
+    printf("Max diff (CPU single vs CUDA naive)   : %e\n", maxd_cpu_cuda);
+    printf("Max diff (CPU single vs cuBLAS)       : %e\n", maxd_cpu_cublas);
+    printf("Max diff (CPU single vs cuBLAS+TC)    : %e\n", maxd_cpu_cublas_tc);
+    printf("Max diff (CPU single vs WMMA)         : %e\n", maxd_cpu_wmma);
 
     // Clean up cuBLAS
     CHECK_CUBLAS(cublasDestroy(cublasH));
@@ -366,7 +490,7 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaFree(d_Af)); CHECK_CUDA(cudaFree(d_Bf));
     CHECK_CUDA(cudaFree(d_C_cuda)); CHECK_CUDA(cudaFree(d_C_cublas)); CHECK_CUDA(cudaFree(d_C_cublas_tc)); CHECK_CUDA(cudaFree(d_C_wmma));
     CHECK_CUDA(cudaFree(d_Ah)); CHECK_CUDA(cudaFree(d_Bh));
-    free(h_A); free(h_B); free(h_C_cpu); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
+    free(h_A); free(h_B); free(h_C_cpu); free(h_C_cpu_opt); free(h_C_cpu_blas); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
 
     return 0;
 }
