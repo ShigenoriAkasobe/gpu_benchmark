@@ -204,7 +204,7 @@ double max_abs_diff(const float* A, const float* B, int N) {
 }
 
 int main(int argc, char** argv) {
-    int N = 4096; // default size (must be multiple of 16)
+    int N = 1024; // default size (must be multiple of 16)
     bool gpu_only = false; // flag for GPU-only benchmark
 
     // Parse command line arguments
@@ -229,6 +229,7 @@ int main(int argc, char** argv) {
     float* h_B = (float*)aligned_alloc(32, bytes_f);
     float* h_C_cpu = (float*)aligned_alloc(32, bytes_f);
     float* h_C_cpu_opt = (float*)aligned_alloc(32, bytes_f);
+    float* h_C_cpu_blas = (float*)malloc(bytes_f);  // OpenBLAS result buffer
     float* h_C_cuda = (float*)malloc(bytes_f);
     float* h_C_cublas = (float*)malloc(bytes_f);
     float* h_C_cublas_tc = (float*)malloc(bytes_f);
@@ -284,7 +285,6 @@ int main(int argc, char** argv) {
 
     // Variables for CPU benchmark results (will be set only if not gpu_only)
     double avg_ms_cpu = 0.0, avg_ms_cpu_opt = 0.0, avg_ms_cpu_blas = 0.0;
-    float* h_C_cpu_blas = nullptr;
 
     if (!gpu_only) {
         // --- CPU Single-Core GEMM (baseline) ---
@@ -293,51 +293,48 @@ int main(int argc, char** argv) {
         // warmup
         matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
 
-    auto cpu_start = high_resolution_clock::now();
-    for (int i = 0; i < repeat; ++i) {
-        matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
-    }
-    auto cpu_end = high_resolution_clock::now();
-    auto cpu_duration = duration_cast<milliseconds>(cpu_end - cpu_start);
-    double avg_ms_cpu = cpu_duration.count() / (double)repeat;
+        auto cpu_start = high_resolution_clock::now();
+        for (int i = 0; i < repeat; ++i) {
+            matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
+        }
+        auto cpu_end = high_resolution_clock::now();
+        auto cpu_duration = duration_cast<milliseconds>(cpu_end - cpu_start);
+        avg_ms_cpu = cpu_duration.count() / (double)repeat;
 
-    printf("CPU single-core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu, repeat);
+        printf("CPU single-core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu, repeat);
 
-    // --- CPU Optimized GEMM (Multi-core + SIMD + Cache blocking) ---
-    printf("Running CPU optimized benchmark (OpenMP + AVX)...\n");
-    printf("Using %d CPU threads\n", omp_get_max_threads());
+        // --- CPU Optimized GEMM (Multi-core + SIMD + Cache blocking) ---
+        printf("Running CPU optimized benchmark (OpenMP + AVX)...\n");
+        printf("Using %d CPU threads\n", omp_get_max_threads());
 
-    // warmup
-    matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
-
-    auto cpu_opt_start = high_resolution_clock::now();
-    for (int i = 0; i < repeat; ++i) {
+        // warmup
         matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
-    }
-    auto cpu_opt_end = high_resolution_clock::now();
-    auto cpu_opt_duration = duration_cast<milliseconds>(cpu_opt_end - cpu_opt_start);
-    double avg_ms_cpu_opt = cpu_opt_duration.count() / (double)repeat;
 
-    printf("CPU optimized GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_opt, repeat);
+        auto cpu_opt_start = high_resolution_clock::now();
+        for (int i = 0; i < repeat; ++i) {
+            matmul_cpu_manual_optimized(h_A, h_B, h_C_cpu_opt, N);
+        }
+        auto cpu_opt_end = high_resolution_clock::now();
+        auto cpu_opt_duration = duration_cast<milliseconds>(cpu_opt_end - cpu_opt_start);
+        avg_ms_cpu_opt = cpu_opt_duration.count() / (double)repeat;
 
-    // --- CPU OpenBLAS GEMM (Industry-standard optimized BLAS) ---
-    printf("Running CPU OpenBLAS benchmark (industry-standard BLAS)...\n");
+        printf("CPU optimized GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_opt, repeat);
 
-    // Allocate output buffer for OpenBLAS
-    float* h_C_cpu_blas = (float*)malloc(N * N * sizeof(float));
+        // --- CPU OpenBLAS GEMM (Industry-standard optimized BLAS) ---
+        printf("Running CPU OpenBLAS benchmark (industry-standard BLAS)...\n");
 
-    // warmup
-    matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
-
-    auto cpu_blas_start = high_resolution_clock::now();
-    for (int i = 0; i < repeat; ++i) {
+        // warmup
         matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
-    }
-    auto cpu_blas_end = high_resolution_clock::now();
-    auto cpu_blas_duration = duration_cast<milliseconds>(cpu_blas_end - cpu_blas_start);
-    double avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat;
 
-    printf("CPU OpenBLAS GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_blas, repeat);
+        auto cpu_blas_start = high_resolution_clock::now();
+        for (int i = 0; i < repeat; ++i) {
+            matmul_cpu_openblas(h_A, h_B, h_C_cpu_blas, N);
+        }
+        auto cpu_blas_end = high_resolution_clock::now();
+        auto cpu_blas_duration = duration_cast<milliseconds>(cpu_blas_end - cpu_blas_start);
+        avg_ms_cpu_blas = cpu_blas_duration.count() / (double)repeat;
+
+        printf("CPU OpenBLAS GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu_blas, repeat);
 
     } else {
         printf("Skipping CPU benchmarks (GPU-only mode)\n");
@@ -534,12 +531,9 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaFree(d_C_cuda)); CHECK_CUDA(cudaFree(d_C_cublas)); CHECK_CUDA(cudaFree(d_C_cublas_tc)); CHECK_CUDA(cudaFree(d_C_wmma));
     CHECK_CUDA(cudaFree(d_Ah)); CHECK_CUDA(cudaFree(d_Bh));
 
-    // Free host memory (conditionally for GPU-only mode)
+    // Free host memory
     free(h_A); free(h_B); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
-    if (!gpu_only) {
-        free(h_C_cpu); free(h_C_cpu_opt);
-        if (h_C_cpu_blas) free(h_C_cpu_blas);
-    }
+    free(h_C_cpu); free(h_C_cpu_opt); free(h_C_cpu_blas);
 
     return 0;
 }

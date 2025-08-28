@@ -70,6 +70,12 @@ test-medium: $(TARGET)
 	@echo "=== Medium test (1024x1024) ==="
 	./$(TARGET) 1024
 
+.PHONY: test-large
+test-large: $(TARGET)
+	@echo "=== Large test (4096x4096, CPU will be slow) ==="
+	@echo "Note: CPU benchmarks will take several minutes"
+	./$(TARGET) 4096
+
 .PHONY: test-gpu-only
 test-gpu-only: $(TARGET)
 	@echo "=== GPU-only test (2048x2048, skipping CPU benchmarks) ==="
@@ -132,9 +138,10 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  all          - Build the benchmark (default, with GPU auto-detection)"
-	@echo "  run          - Run the benchmark (default 4096x4096)"
+	@echo "  run          - Run the benchmark (default 1024x1024)"
 	@echo "  test-small   - Quick test with 512x512 matrix (includes CPU)"
 	@echo "  test-medium  - Medium test with 1024x1024 matrix (includes CPU)"
+	@echo "  test-large   - Large test with 4096x4096 matrix (CPU will be slow)"
 	@echo "  test-gpu-only - GPU-only test with 2048x2048 (CPU too slow)"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  info         - Display detailed GPU information"
@@ -161,8 +168,9 @@ help:
 	@echo "  make ARCH=sm_XX  # Manually specify architecture"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make test-small # Quick 7-way comparison with small matrices"
+	@echo "  make test-small  # Quick 7-way comparison with small matrices"
 	@echo "  make test-medium # Medium size with optimized CPU vs GPU comparison"
-	@echo "  make run        # Full benchmark (CPU will be very slow!)"
-	@echo "  make clean all  # Clean and rebuild with auto-detection"
-	@echo "  make check-cuda # Check CUDA and show detected configuration"
+	@echo "  make test-large  # Large size (CPU will take several minutes)"
+	@echo "  make run         # Standard benchmark (1024x1024, reasonable performance)"
+	@echo "  make clean all   # Clean and rebuild with auto-detection"
+	@echo "  make check-cuda  # Check CUDA and show detected configuration"
