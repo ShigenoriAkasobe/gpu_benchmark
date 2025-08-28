@@ -475,18 +475,18 @@ int main(int argc, char** argv) {
 
     printf("\n=== Performance Summary ===\n");
     if (!gpu_only) {
-        printf("1. CPU single-core    : %8.3f ms (baseline)\n", avg_ms_cpu);
+        printf("1. CPU single-core     : %8.3f ms (baseline)\n", avg_ms_cpu);
         printf("2. CPU manual optimized: %8.3f ms (%.2fx faster than single-core)\n",
                avg_ms_cpu_opt, avg_ms_cpu / avg_ms_cpu_opt);
-        printf("3. CPU OpenBLAS       : %8.3f ms (%.2fx faster than single-core, %.2fx vs manual)\n",
+        printf("3. CPU OpenBLAS        : %8.3f ms (%.2fx faster than single-core, %.2fx vs manual)\n",
                avg_ms_cpu_blas, avg_ms_cpu / avg_ms_cpu_blas, avg_ms_cpu_opt / avg_ms_cpu_blas);
-        printf("4. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU single-core)\n",
+        printf("4. CUDA-Core naive     : %8.3f ms (%.2fx faster than CPU single-core)\n",
                avg_ms_cuda, avg_ms_cpu / avg_ms_cuda);
-        printf("5. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than CUDA naive)\n",
+        printf("5. cuBLAS optimized    : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than CUDA naive)\n",
                avg_ms_cublas, avg_ms_cpu / avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
-        printf("6. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than cuBLAS)\n",
+        printf("6. cuBLAS + TensorCore : %8.3f ms (%.2fx faster than CPU single-core, %.2fx faster than cuBLAS)\n",
                avg_ms_cublas_tc, avg_ms_cpu / avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
-        printf("7. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU single-core, %.2fx vs cuBLAS)\n",
+        printf("7. WMMA manual impl    : %8.3f ms (%.2fx faster than CPU single-core, %.2fx vs cuBLAS)\n",
                avg_ms_wmma, avg_ms_cpu / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
 
         printf("\n=== CPU vs GPU Comparison ===\n");
@@ -510,11 +510,11 @@ int main(int argc, char** argv) {
     if (!gpu_only) {
         printf("\n=== Accuracy Verification (vs CPU single-core baseline) ===\n");
         printf("Max diff (CPU single vs CPU manual opt): %e\n", maxd_cpu_cpu_opt);
-        printf("Max diff (CPU single vs CPU OpenBLAS) : %e\n", maxd_cpu_cpu_blas);
-        printf("Max diff (CPU single vs CUDA naive)   : %e\n", maxd_cpu_cuda);
-        printf("Max diff (CPU single vs cuBLAS)       : %e\n", maxd_cpu_cublas);
-        printf("Max diff (CPU single vs cuBLAS+TC)    : %e\n", maxd_cpu_cublas_tc);
-        printf("Max diff (CPU single vs WMMA)         : %e\n", maxd_cpu_wmma);
+        printf("Max diff (CPU single vs CPU OpenBLAS)  : %e\n", maxd_cpu_cpu_blas);
+        printf("Max diff (CPU single vs CUDA naive)    : %e\n", maxd_cpu_cuda);
+        printf("Max diff (CPU single vs cuBLAS)        : %e\n", maxd_cpu_cublas);
+        printf("Max diff (CPU single vs cuBLAS+TC)     : %e\n", maxd_cpu_cublas_tc);
+        printf("Max diff (CPU single vs WMMA)          : %e\n", maxd_cpu_wmma);
     } else {
         printf("\n=== Accuracy Verification (GPU-only mode) ===\n");
         printf("GPU accuracy verification skipped (no CPU baseline in GPU-only mode)\n");
