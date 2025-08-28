@@ -27,6 +27,23 @@ using namespace std::chrono;
 } while(0)
 
 ////////////////////////////////////////////////////////////////////////////////
+// CPU Single-Core GEMM (FP32) - Baseline implementation
+// Compute C = A * B (naive triple loop)
+////////////////////////////////////////////////////////////////////////////////
+void matmul_cpu_single_core(const float* A, const float* B, float* C, int N) {
+    // Simple triple loop - no optimization
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            float sum = 0.0f;
+            for (int k = 0; k < N; ++k) {
+                sum += A[i * N + k] * B[k * N + j];
+            }
+            C[i * N + j] = sum;
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Simple CUDA-Core GEMM (FP32)
 // Compute C = A * B
 ////////////////////////////////////////////////////////////////////////////////
@@ -126,21 +143,24 @@ int main(int argc, char** argv) {
     // host allocations
     float* h_A = (float*)malloc(bytes_f);
     float* h_B = (float*)malloc(bytes_f);
+    float* h_C_cpu = (float*)malloc(bytes_f);
     float* h_C_cuda = (float*)malloc(bytes_f);
     float* h_C_cublas = (float*)malloc(bytes_f);
+    float* h_C_cublas_tc = (float*)malloc(bytes_f);
     float* h_C_wmma = (float*)malloc(bytes_f);
 
     init_matrix_float(h_A, N, 123);
     init_matrix_float(h_B, N, 456);
 
     // device allocations
-    float *d_Af = nullptr, *d_Bf = nullptr, *d_C_cuda = nullptr, *d_C_cublas = nullptr, *d_C_wmma = nullptr;
+    float *d_Af = nullptr, *d_Bf = nullptr, *d_C_cuda = nullptr, *d_C_cublas = nullptr, *d_C_cublas_tc = nullptr, *d_C_wmma = nullptr;
     half *d_Ah = nullptr, *d_Bh = nullptr;
 
     CHECK_CUDA(cudaMalloc((void**)&d_Af, bytes_f));
     CHECK_CUDA(cudaMalloc((void**)&d_Bf, bytes_f));
     CHECK_CUDA(cudaMalloc((void**)&d_C_cuda, bytes_f));
     CHECK_CUDA(cudaMalloc((void**)&d_C_cublas, bytes_f));
+    CHECK_CUDA(cudaMalloc((void**)&d_C_cublas_tc, bytes_f));
     CHECK_CUDA(cudaMalloc((void**)&d_C_wmma, bytes_f)); // output as float
 
     CHECK_CUDA(cudaMalloc((void**)&d_Ah, bytes_h));
@@ -160,13 +180,41 @@ int main(int argc, char** argv) {
     // Warm up
     CHECK_CUDA(cudaMemset(d_C_cuda, 0, bytes_f));
     CHECK_CUDA(cudaMemset(d_C_cublas, 0, bytes_f));
+    CHECK_CUDA(cudaMemset(d_C_cublas_tc, 0, bytes_f));
     CHECK_CUDA(cudaMemset(d_C_wmma, 0, bytes_f));
 
     // Initialize cuBLAS
     cublasHandle_t cublasH;
     CHECK_CUBLAS(cublasCreate(&cublasH));
 
+    // Enable Tensor Core usage for cuBLAS
+    CHECK_CUBLAS(cublasSetMathMode(cublasH, CUBLAS_TENSOR_OP_MATH));
+
+    // timing with events/chrono
+    cudaEvent_t start, stop;
+    CHECK_CUDA(cudaEventCreate(&start));
+    CHECK_CUDA(cudaEventCreate(&stop));
+
+    int repeat = 3;
+
+    // --- CPU Single-Core GEMM (baseline) ---
+    printf("Running CPU single-core benchmark...\n");
+
+    // warmup
+    matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
+
+    auto cpu_start = high_resolution_clock::now();
+    for (int i = 0; i < repeat; ++i) {
+        matmul_cpu_single_core(h_A, h_B, h_C_cpu, N);
+    }
+    auto cpu_end = high_resolution_clock::now();
+    auto cpu_duration = duration_cast<milliseconds>(cpu_end - cpu_start);
+    double avg_ms_cpu = cpu_duration.count() / (double)repeat;
+
+    printf("CPU single-core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cpu, repeat);
+
     // --- CUDA Core GEMM (naive) ---
+    printf("Running CUDA naive benchmark...\n");
     dim3 block(16, 16);
     dim3 grid((N + block.x - 1) / block.x, (N + block.y - 1) / block.y);
 
@@ -175,12 +223,6 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 
-    // timing with cuda events
-    cudaEvent_t start, stop;
-    CHECK_CUDA(cudaEventCreate(&start));
-    CHECK_CUDA(cudaEventCreate(&stop));
-
-    int repeat = 3;
     CHECK_CUDA(cudaEventRecord(start));
     for (int i = 0; i < repeat; ++i) {
         matmul_cuda_core<<<grid, block>>>(d_Af, d_Bf, d_C_cuda, N);
@@ -194,6 +236,7 @@ int main(int argc, char** argv) {
     printf("CUDA-Core naive GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cuda, repeat);
 
     // --- cuBLAS optimized GEMM (FP32) ---
+    printf("Running cuBLAS optimized benchmark...\n");
     // cuBLAS uses column-major format, so we compute C = B^T * A^T = (A * B)^T
     // Then we interpret the result as row-major C = A * B
     const float alpha = 1.0f, beta = 0.0f;
@@ -226,7 +269,44 @@ int main(int argc, char** argv) {
 
     printf("cuBLAS optimized GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cublas, repeat);
 
+    // --- cuBLAS + Tensor Core GEMM (FP16 with automatic mixed precision) ---
+    printf("Running cuBLAS + Tensor Core benchmark...\n");
+    const float alpha_f = 1.0f, beta_f = 0.0f;
+
+    // warmup
+    CHECK_CUBLAS(cublasGemmEx(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
+                             N, N, N,
+                             &alpha_f,
+                             d_Bh, CUDA_R_16F, N,  // B matrix (FP16)
+                             d_Ah, CUDA_R_16F, N,  // A matrix (FP16)
+                             &beta_f,
+                             d_C_cublas_tc, CUDA_R_32F, N,  // C matrix (FP32)
+                             CUDA_R_32F,  // Computation type
+                             CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    CHECK_CUDA(cudaDeviceSynchronize());
+
+    CHECK_CUDA(cudaEventRecord(start));
+    for (int i = 0; i < repeat; ++i) {
+        CHECK_CUBLAS(cublasGemmEx(cublasH, CUBLAS_OP_N, CUBLAS_OP_N,
+                                 N, N, N,
+                                 &alpha_f,
+                                 d_Bh, CUDA_R_16F, N,  // B matrix (FP16)
+                                 d_Ah, CUDA_R_16F, N,  // A matrix (FP16)
+                                 &beta_f,
+                                 d_C_cublas_tc, CUDA_R_32F, N,  // C matrix (FP32)
+                                 CUDA_R_32F,  // Computation type
+                                 CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    }
+    CHECK_CUDA(cudaEventRecord(stop));
+    CHECK_CUDA(cudaEventSynchronize(stop));
+    float ms_cublas_tc = 0;
+    CHECK_CUDA(cudaEventElapsedTime(&ms_cublas_tc, start, stop));
+    double avg_ms_cublas_tc = ms_cublas_tc / (double)repeat;
+
+    printf("cuBLAS + Tensor Core GEMM avg time: %f ms (avg over %d runs)\n", avg_ms_cublas_tc, repeat);
+
     // --- WMMA Tensor Core GEMM ---
+    printf("Running WMMA manual implementation benchmark...\n");
     // grid: N/16 x N/16 (one warp per tile approach)
     dim3 grid_wmma(N / 16, N / 16);
     dim3 block_wmma(32, 1, 1); // one warp per block (simple mapping)
@@ -251,24 +331,31 @@ int main(int argc, char** argv) {
     // copy back results
     CHECK_CUDA(cudaMemcpy(h_C_cuda, d_C_cuda, bytes_f, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_C_cublas, d_C_cublas, bytes_f, cudaMemcpyDeviceToHost));
+    CHECK_CUDA(cudaMemcpy(h_C_cublas_tc, d_C_cublas_tc, bytes_f, cudaMemcpyDeviceToHost));
     CHECK_CUDA(cudaMemcpy(h_C_wmma, d_C_wmma, bytes_f, cudaMemcpyDeviceToHost));
 
-    // verify differences
-    double maxd_naive_cublas = max_abs_diff(h_C_cuda, h_C_cublas, N);
-    double maxd_naive_wmma = max_abs_diff(h_C_cuda, h_C_wmma, N);
-    double maxd_cublas_wmma = max_abs_diff(h_C_cublas, h_C_wmma, N);
+    // verify differences (using CPU as reference)
+    double maxd_cpu_cuda = max_abs_diff(h_C_cpu, h_C_cuda, N);
+    double maxd_cpu_cublas = max_abs_diff(h_C_cpu, h_C_cublas, N);
+    double maxd_cpu_cublas_tc = max_abs_diff(h_C_cpu, h_C_cublas_tc, N);
+    double maxd_cpu_wmma = max_abs_diff(h_C_cpu, h_C_wmma, N);
 
     printf("\n=== Performance Summary ===\n");
-    printf("1. CUDA-Core naive : %8.3f ms\n", avg_ms_cuda);
-    printf("2. cuBLAS optimized: %8.3f ms (%.2fx faster than naive)\n",
-           avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
-    printf("3. WMMA Tensor-Core: %8.3f ms (%.2fx faster than naive, %.2fx faster than cuBLAS)\n",
-           avg_ms_wmma, avg_ms_cuda / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
+    printf("1. CPU single-core    : %8.3f ms (baseline)\n", avg_ms_cpu);
+    printf("2. CUDA-Core naive    : %8.3f ms (%.2fx faster than CPU)\n",
+           avg_ms_cuda, avg_ms_cpu / avg_ms_cuda);
+    printf("3. cuBLAS optimized   : %8.3f ms (%.2fx faster than CPU, %.2fx faster than CUDA naive)\n",
+           avg_ms_cublas, avg_ms_cpu / avg_ms_cublas, avg_ms_cuda / avg_ms_cublas);
+    printf("4. cuBLAS + TensorCore: %8.3f ms (%.2fx faster than CPU, %.2fx faster than cuBLAS)\n",
+           avg_ms_cublas_tc, avg_ms_cpu / avg_ms_cublas_tc, avg_ms_cublas / avg_ms_cublas_tc);
+    printf("5. WMMA manual impl   : %8.3f ms (%.2fx faster than CPU, %.2fx vs cuBLAS)\n",
+           avg_ms_wmma, avg_ms_cpu / avg_ms_wmma, avg_ms_cublas / avg_ms_wmma);
 
-    printf("\n=== Accuracy Verification ===\n");
-    printf("Max diff (naive vs cuBLAS): %e\n", maxd_naive_cublas);
-    printf("Max diff (naive vs WMMA):   %e\n", maxd_naive_wmma);
-    printf("Max diff (cuBLAS vs WMMA):  %e\n", maxd_cublas_wmma);
+    printf("\n=== Accuracy Verification (vs CPU baseline) ===\n");
+    printf("Max diff (CPU vs CUDA naive)    : %e\n", maxd_cpu_cuda);
+    printf("Max diff (CPU vs cuBLAS)        : %e\n", maxd_cpu_cublas);
+    printf("Max diff (CPU vs cuBLAS+TC)     : %e\n", maxd_cpu_cublas_tc);
+    printf("Max diff (CPU vs WMMA)          : %e\n", maxd_cpu_wmma);
 
     // Clean up cuBLAS
     CHECK_CUBLAS(cublasDestroy(cublasH));
@@ -277,9 +364,9 @@ int main(int argc, char** argv) {
     CHECK_CUDA(cudaEventDestroy(start));
     CHECK_CUDA(cudaEventDestroy(stop));
     CHECK_CUDA(cudaFree(d_Af)); CHECK_CUDA(cudaFree(d_Bf));
-    CHECK_CUDA(cudaFree(d_C_cuda)); CHECK_CUDA(cudaFree(d_C_cublas)); CHECK_CUDA(cudaFree(d_C_wmma));
+    CHECK_CUDA(cudaFree(d_C_cuda)); CHECK_CUDA(cudaFree(d_C_cublas)); CHECK_CUDA(cudaFree(d_C_cublas_tc)); CHECK_CUDA(cudaFree(d_C_wmma));
     CHECK_CUDA(cudaFree(d_Ah)); CHECK_CUDA(cudaFree(d_Bh));
-    free(h_A); free(h_B); free(h_C_cuda); free(h_C_cublas); free(h_C_wmma);
+    free(h_A); free(h_B); free(h_C_cpu); free(h_C_cuda); free(h_C_cublas); free(h_C_cublas_tc); free(h_C_wmma);
 
     return 0;
 }

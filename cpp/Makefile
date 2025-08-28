@@ -56,6 +56,23 @@ $(TARGET): $(SOURCE)
 run: $(TARGET)
 	./$(TARGET)
 
+# Quick benchmark tests with different sizes
+.PHONY: test-small
+test-small: $(TARGET)
+	@echo "=== Quick test with small matrix (512x512) ==="
+	./$(TARGET) 512
+
+.PHONY: test-medium
+test-medium: $(TARGET)
+	@echo "=== Medium test (1024x1024) ==="
+	./$(TARGET) 1024
+
+.PHONY: test-gpu-only
+test-gpu-only: $(TARGET)
+	@echo "=== GPU-only test (2048x2048, no CPU comparison) ==="
+	@echo "Note: Skipping CPU benchmark due to performance (would take >20 minutes)"
+	./$(TARGET) 2048
+
 # Clean build artifacts
 .PHONY: clean
 clean:
@@ -107,18 +124,28 @@ force-ada:
 # Help target
 .PHONY: help
 help:
-	@echo "CUDA WMMA Benchmark Makefile with Auto-Detection"
-	@echo "================================================="
+	@echo "CUDA WMMA Benchmark Makefile with Auto-Detection & 5-Way Comparison"
+	@echo "====================================================================="
 	@echo ""
 	@echo "Available targets:"
 	@echo "  all          - Build the benchmark (default, with GPU auto-detection)"
-	@echo "  run          - Run the benchmark"
+	@echo "  run          - Run the benchmark (default 4096x4096)"
+	@echo "  test-small   - Quick test with 512x512 matrix (includes CPU)"
+	@echo "  test-medium  - Medium test with 1024x1024 matrix (includes CPU)"
+	@echo "  test-gpu-only - GPU-only test with 2048x2048 (CPU too slow)"
 	@echo "  clean        - Remove build artifacts"
 	@echo "  info         - Display detailed GPU information"
 	@echo "  check-cuda   - Check CUDA installation and detected GPU"
 	@echo "  debug        - Build with debug information"
 	@echo "  profile      - Run with nvprof profiler"
 	@echo "  show-gpu-info - Show detected GPU information"
+	@echo ""
+	@echo "Comparison includes:"
+	@echo "  1. CPU single-core (baseline)"
+	@echo "  2. CUDA-Core naive"
+	@echo "  3. cuBLAS optimized"
+	@echo "  4. cuBLAS + Tensor Core"
+	@echo "  5. WMMA manual implementation"
 	@echo ""
 	@echo "Force specific architecture (override auto-detection):"
 	@echo "  force-turing - Force build for Turing (sm_75)"
@@ -129,7 +156,8 @@ help:
 	@echo "  make ARCH=sm_XX  # Manually specify architecture"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make            # Auto-detect and build"
-	@echo "  make run        # Auto-detect, build and run"
+	@echo "  make test-small # Quick 5-way comparison with small matrices"
+	@echo "  make test-medium # Medium size with CPU vs GPU comparison"
+	@echo "  make run        # Full benchmark (CPU will be very slow!)"
 	@echo "  make clean all  # Clean and rebuild with auto-detection"
 	@echo "  make check-cuda # Check CUDA and show detected configuration"
