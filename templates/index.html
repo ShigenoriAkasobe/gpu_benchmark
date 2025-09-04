@@ -52,6 +52,22 @@
                     <input type="number" id="memory-size" value="500" min="10" max="2000" step="10">
                     <small>メモリ帯域幅テストのデータサイズ</small>
                 </div>
+
+                <div class="setting-item">
+                    <label for="benchmark-type">ベンチマークタイプ:</label>
+                    <select id="benchmark-type">
+                        <option value="traditional">従来型 (Python)</option>
+                        <option value="all" selected>全体比較 (CUDA C++)</option>
+                        <option value="cpu_single">CPU シングルコア</option>
+                        <option value="cpu_optimized">CPU 最適化</option>
+                        <option value="cpu_openblas">CPU OpenBLAS</option>
+                        <option value="cuda_naive">CUDA ナイーブ</option>
+                        <option value="cublas">cuBLAS</option>
+                        <option value="cublas_tensorcore">cuBLAS + Tensor Core</option>
+                        <option value="wmma">WMMA Tensor Core</option>
+                    </select>
+                    <small>実行するベンチマークの種類を選択</small>
+                </div>
             </div>
 
             <div class="preset-buttons">
@@ -61,7 +77,10 @@
                 <button onclick="setPreset('heaviest')">最重負荷テスト</button>
             </div>
 
-            <button id="start-btn" onclick="startBenchmark()">ベンチマーク開始</button>
+            <div class="action-buttons">
+                <button id="start-btn" onclick="startBenchmark()">ベンチマーク開始</button>
+                <button id="start-cuda-btn" onclick="startCudaBenchmark()">CUDA C++ ベンチマーク</button>
+            </div>
             <!-- <button onclick="cleanupGPUMemory()">GPUメモリクリーンアップ</button> -->
 
             <div id="progress-section" style="display: none;">
@@ -73,6 +92,10 @@
 
             <div id="results-section">
                 <div class="results-grid" id="results-grid"></div>
+                <div id="speedup-analysis" style="display: none;">
+                    <h3>性能比較分析</h3>
+                    <div id="speedup-table"></div>
+                </div>
             </div>
         </div>
     </div>

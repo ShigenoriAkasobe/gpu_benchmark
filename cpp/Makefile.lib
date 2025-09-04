@@ -1,0 +1,138 @@
+# Makefile for CUDA benchmark library
+# Creates a shared library that can be called from Python via ctypes
+
+NVCC = nvcc
+LIB_TARGET = libbenchmark.so
+HEADER = benchmark_lib.h
+SOURCE = benchmark_lib.cu
+LIBS = -lcublas -lopenblas
+CPU_FLAGS = -fopenmp -mavx2 -mfma -O3
+
+# Auto-detect GPU architecture (same as original Makefile)
+GPU_NAME := $(shell nvidia-smi --query-gpu=name --format=csv,noheader,nounits | head -1)
+GPU_COMPUTE := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits | head -1 | tr -d '.')
+
+# Map compute capability to architecture
+ifeq ($(GPU_COMPUTE),75)
+    ARCH = sm_75
+    GPU_GENERATION = Turing
+else ifeq ($(GPU_COMPUTE),80)
+    ARCH = sm_80
+    GPU_GENERATION = Ampere
+else ifeq ($(GPU_COMPUTE),86)
+    ARCH = sm_86
+    GPU_GENERATION = Ampere
+else ifeq ($(GPU_COMPUTE),89)
+    ARCH = sm_89
+    GPU_GENERATION = Ada Lovelace
+else ifeq ($(GPU_COMPUTE),90)
+    ARCH = sm_90
+    GPU_GENERATION = Hopper
+else
+    # Default fallback
+    ARCH = sm_75
+    GPU_GENERATION = Unknown (defaulting to Turing)
+endif
+
+CFLAGS = -O3 -arch=$(ARCH) --shared -Xcompiler -fPIC
+INSTALL_DIR = ../lib
+
+# Default target
+.PHONY: all
+all: show-gpu-info $(LIB_TARGET)
+
+# Show detected GPU information
+.PHONY: show-gpu-info
+show-gpu-info:
+	@echo "Building CUDA Benchmark Shared Library"
+	@echo "======================================"
+	@echo "Detected GPU: $(GPU_NAME)"
+	@echo "Compute Capability: $(GPU_COMPUTE)"
+	@echo "Architecture: $(ARCH)"
+	@echo "Generation: $(GPU_GENERATION)"
+	@echo ""
+
+# Create lib directory if it doesn't exist
+$(INSTALL_DIR):
+	mkdir -p $(INSTALL_DIR)
+
+# Compile the shared library
+$(LIB_TARGET): $(SOURCE) $(HEADER) | $(INSTALL_DIR)
+	$(NVCC) $(CFLAGS) $(SOURCE) -o $(LIB_TARGET) $(LIBS) -Xcompiler "$(CPU_FLAGS)"
+	cp $(LIB_TARGET) $(INSTALL_DIR)/
+	cp $(HEADER) $(INSTALL_DIR)/
+	@echo ""
+	@echo "Shared library created: $(LIB_TARGET)"
+	@echo "Installed to: $(INSTALL_DIR)/"
+	@echo "Header copied to: $(INSTALL_DIR)/$(HEADER)"
+
+# Test the library with a simple C program
+.PHONY: test-lib
+test-lib: $(LIB_TARGET)
+	@echo "Creating test program..."
+	@echo '#include <stdio.h>' > test_lib.c
+	@echo '#include "benchmark_lib.h"' >> test_lib.c
+	@echo 'int main() {' >> test_lib.c
+	@echo '    printf("Testing GPU availability: %s\\n", check_gpu_availability() ? "Available" : "Not available");' >> test_lib.c
+	@echo '    BenchmarkResult* result = run_cpu_single_core_benchmark(512, 1);' >> test_lib.c
+	@echo '    if (result && result->success) {' >> test_lib.c
+	@echo '        printf("CPU single-core benchmark (512x512): %.2f ms\\n", result->cpu_single_core_ms);' >> test_lib.c
+	@echo '        free_benchmark_result(result);' >> test_lib.c
+	@echo '    }' >> test_lib.c
+	@echo '    return 0;' >> test_lib.c
+	@echo '}' >> test_lib.c
+	gcc -o test_lib test_lib.c -L. -lbenchmark $(LIBS) -Xlinker -rpath=.
+	./test_lib
+	rm -f test_lib test_lib.c
+
+# Clean build artifacts
+.PHONY: clean
+clean:
+	rm -f $(LIB_TARGET) test_lib test_lib.c
+	rm -rf $(INSTALL_DIR)
+
+# Install system-wide (requires sudo)
+.PHONY: install-system
+install-system: $(LIB_TARGET)
+	sudo cp $(LIB_TARGET) /usr/local/lib/
+	sudo cp $(HEADER) /usr/local/include/
+	sudo ldconfig
+	@echo "Library installed system-wide"
+
+# Check CUDA installation
+.PHONY: check-cuda
+check-cuda:
+	@echo "=== CUDA Version ==="
+	nvcc --version
+	@echo ""
+	@echo "=== GPU Information ==="
+	nvidia-smi --query-gpu=name,compute_cap,driver_version,memory.total --format=csv
+
+# Help target
+.PHONY: help
+help:
+	@echo "CUDA Benchmark Library Makefile"
+	@echo "==============================="
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all          - Build the shared library (default, with GPU auto-detection)"
+	@echo "  test-lib     - Build and test the library with a simple C program"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  install-system - Install library system-wide (requires sudo)"
+	@echo "  check-cuda   - Check CUDA installation and GPU information"
+	@echo ""
+	@echo "The library provides the following functions:"
+	@echo "  - run_cpu_single_core_benchmark()"
+	@echo "  - run_cpu_optimized_benchmark()"
+	@echo "  - run_cpu_openblas_benchmark()"
+	@echo "  - run_cuda_naive_benchmark()"
+	@echo "  - run_cublas_benchmark()"
+	@echo "  - run_cublas_tensorcore_benchmark()"
+	@echo "  - run_wmma_benchmark()"
+	@echo "  - run_all_benchmarks()"
+	@echo "  - check_gpu_availability()"
+	@echo ""
+	@echo "Generated files:"
+	@echo "  $(LIB_TARGET) - Shared library"
+	@echo "  $(INSTALL_DIR)/$(LIB_TARGET) - Installed library"
+	@echo "  $(INSTALL_DIR)/$(HEADER) - Header file for Python ctypes"

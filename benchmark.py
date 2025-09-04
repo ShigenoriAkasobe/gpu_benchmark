@@ -19,10 +19,31 @@ try:
 except ImportError:
     PYTORCH_AVAILABLE = False
 
+# CUDA C++ benchmark library
+try:
+    from cuda_benchmark import (
+        CudaBenchmarkLibrary,
+        check_gpu_availability,
+        run_benchmark,
+    )
+
+    CUDA_CPP_AVAILABLE = True
+except ImportError as e:
+    print(f"CUDA C++ benchmark library not available: {e}")
+    CUDA_CPP_AVAILABLE = False
+
 
 class GPUBenchmark:
     def __init__(self):
         self.results = {}
+        # Initialize CUDA C++ library if available
+        self.cuda_lib = None
+        if CUDA_CPP_AVAILABLE:
+            try:
+                self.cuda_lib = CudaBenchmarkLibrary()
+            except Exception as e:
+                print(f"Failed to initialize CUDA C++ library: {e}")
+                self.cuda_lib = None
 
     def get_gpu_info(self):
         """GPU情報を取得"""
@@ -264,6 +285,71 @@ class GPUBenchmark:
 
         return results
 
+    def run_cuda_cpp_benchmark(
+        self, benchmark_type="all", matrix_size=2000, iterations=1, progress_callback=None
+    ):
+        """
+        Run CUDA C++ benchmarks
+
+        Args:
+            benchmark_type: Type of benchmark ('cpu_single', 'cpu_optimized', 'cpu_openblas',
+                           'cuda_naive', 'cublas', 'cublas_tensorcore', 'wmma', 'all')
+            matrix_size: Size of square matrices
+            iterations: Number of iterations to average
+            progress_callback: Optional callback function for progress updates
+
+        Returns:
+            Dict containing benchmark results
+        """
+        if not self.cuda_lib:
+            return {"error": "CUDA C++ library not available"}
+
+        try:
+            if progress_callback:
+                progress_callback(f"CUDA C++ {benchmark_type}", 0)
+
+            # For large matrices and CPU benchmarks, use gpu_only mode
+            gpu_only = matrix_size > 1024 and benchmark_type == "all"
+
+            if benchmark_type == "all":
+                result = self.cuda_lib.run_all_benchmarks(matrix_size, iterations, gpu_only)
+            else:
+                result = run_benchmark(benchmark_type, matrix_size, iterations)
+
+            if progress_callback:
+                progress_callback(f"CUDA C++ {benchmark_type}", 100)
+
+            if not result.success:
+                return {"error": result.error_message}
+
+            # Convert to dict and add analysis
+            result_dict = result.to_dict()
+            result_dict["speedup_analysis"] = result.get_speedup_analysis()
+
+            return result_dict
+
+        except Exception as e:
+            return {"error": f"CUDA C++ benchmark failed: {str(e)}"}
+
+    def run_individual_cuda_cpp_benchmark(
+        self, benchmark_type, matrix_size, iterations=1, progress_callback=None
+    ):
+        """
+        Run individual CUDA C++ benchmark for finer control
+
+        Args:
+            benchmark_type: Specific benchmark type
+            matrix_size: Matrix size
+            iterations: Number of iterations
+            progress_callback: Progress callback function
+
+        Returns:
+            Dict with benchmark result
+        """
+        return self.run_cuda_cpp_benchmark(
+            benchmark_type, matrix_size, iterations, progress_callback
+        )
+
     def cleanup_gpu_memory(self):
         """GPUメモリのクリーンアップ"""
         try:
@@ -289,9 +375,31 @@ class GPUBenchmark:
 
 # 利用可能性をエクスポート
 def get_availability():
-    """各ライブラリの利用可能性を返す"""
-    return {
+    """利用可能なベンチマーク機能を確認"""
+    availability = {
         "cuda_available": CUDA_AVAILABLE,
         "pytorch_available": PYTORCH_AVAILABLE,
-        "torch_cuda_available": torch.cuda.is_available() if PYTORCH_AVAILABLE else False,
+        "cuda_cpp_available": CUDA_CPP_AVAILABLE,
+        "gpu_devices": [],
     }
+
+    # GPU情報を取得
+    try:
+        gpus = GPUtil.getGPUs()
+        for gpu in gpus:
+            availability["gpu_devices"].append(
+                {"id": gpu.id, "name": gpu.name, "memory_total": gpu.memoryTotal}
+            )
+    except Exception as e:
+        print(f"GPU情報取得エラー: {e}")
+
+    # CUDA C++ library GPU check
+    if CUDA_CPP_AVAILABLE:
+        try:
+            availability["cuda_cpp_gpu_available"] = check_gpu_availability()
+        except Exception:
+            availability["cuda_cpp_gpu_available"] = False
+    else:
+        availability["cuda_cpp_gpu_available"] = False
+
+    return availability

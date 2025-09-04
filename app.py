@@ -45,6 +45,7 @@ def start_benchmark():
     matrix_size = data.get("matrix_size", 2000)
     iterations = data.get("iterations", 1)
     memory_size = data.get("memory_size", 100)
+    benchmark_type = data.get("benchmark_type", "all")  # 新しいパラメータ
 
     # パラメータ検証
     try:
@@ -65,9 +66,30 @@ def start_benchmark():
     def run_benchmark():
         global is_running, benchmark_results
         is_running = True
-        benchmark_results = gpu_benchmark.run_all_benchmarks(
-            matrix_size, iterations, memory_size, progress_callback
-        )
+
+        # Choose benchmark type
+        if benchmark_type == "traditional":
+            # Traditional Python-based benchmarks
+            benchmark_results = gpu_benchmark.run_all_benchmarks(
+                matrix_size, iterations, memory_size, progress_callback
+            )
+        elif benchmark_type in [
+            "all",
+            "cpu_single",
+            "cpu_optimized",
+            "cpu_openblas",
+            "cuda_naive",
+            "cublas",
+            "cublas_tensorcore",
+            "wmma",
+        ]:
+            # CUDA C++ benchmarks
+            benchmark_results = gpu_benchmark.run_cuda_cpp_benchmark(
+                benchmark_type, matrix_size, iterations, progress_callback
+            )
+        else:
+            benchmark_results = {"error": f"Unknown benchmark type: {benchmark_type}"}
+
         is_running = False
 
     # 別スレッドでベンチマークを実行
@@ -77,7 +99,58 @@ def start_benchmark():
 
     return jsonify(
         {
-            "message": f"ベンチマークを開始しました (行列:{matrix_size}x{matrix_size}, 回数:{iterations}, メモリ:{memory_size}MB)"
+            "message": f"ベンチマーク({benchmark_type})を開始しました (行列:{matrix_size}x{matrix_size}, 回数:{iterations})"
+        }
+    )
+
+
+@app.route("/start_cuda_benchmark", methods=["POST"])
+def start_cuda_benchmark():
+    """CUDA C++ benchmark specific endpoint"""
+    global is_running, benchmark_results
+
+    if is_running:
+        return jsonify({"error": "ベンチマークは既に実行中です"})
+
+    # パラメータを取得
+    data = request.get_json() or {}
+    matrix_size = data.get("matrix_size", 2000)
+    iterations = data.get("iterations", 1)
+    benchmark_type = data.get("benchmark_type", "all")
+
+    # パラメータ検証
+    try:
+        matrix_size = int(matrix_size)
+        iterations = int(iterations)
+
+        if matrix_size < 100 or matrix_size > 20000:
+            return jsonify({"error": "行列サイズは100-20000の範囲で設定してください"})
+        if iterations < 1 or iterations > 10:
+            return jsonify({"error": "実行回数は1-10の範囲で設定してください"})
+
+        # WMMA requires matrix size to be multiple of 16
+        if benchmark_type == "wmma" and matrix_size % 16 != 0:
+            return jsonify({"error": "WMMAベンチマークには16の倍数の行列サイズが必要です"})
+
+    except ValueError:
+        return jsonify({"error": "無効なパラメータです"})
+
+    def run_cuda_benchmark():
+        global is_running, benchmark_results
+        is_running = True
+        benchmark_results = gpu_benchmark.run_cuda_cpp_benchmark(
+            benchmark_type, matrix_size, iterations, progress_callback
+        )
+        is_running = False
+
+    # 別スレッドでベンチマークを実行
+    thread = threading.Thread(target=run_cuda_benchmark)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify(
+        {
+            "message": f"CUDA C++ ベンチマーク({benchmark_type})を開始しました (行列:{matrix_size}x{matrix_size}, 回数:{iterations})"
         }
     )
 

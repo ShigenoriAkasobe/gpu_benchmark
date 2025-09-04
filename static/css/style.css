@@ -181,6 +181,51 @@ button:disabled {
     background: linear-gradient(45deg, #218838, #1ea085);
 }
 
+.action-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin: 20px 0;
+}
+
+.action-buttons button {
+    flex: 1;
+    max-width: 250px;
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+.results-table th,
+.results-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.results-table th {
+    background-color: #f7fafc;
+    font-weight: 600;
+    color: #4a5568;
+}
+
+.results-table .best-result {
+    background-color: #c6f6d5;
+    font-weight: 600;
+}
+
+.speedup-analysis {
+    margin-top: 20px;
+}
+
+.speedup-analysis h3 {
+    color: #4a5568;
+    margin-bottom: 15px;
+}
+
 /* レスポンシブデザイン */
 @media (max-width: 768px) {
     .container {
@@ -197,5 +242,13 @@ button:disabled {
 
     .results-grid {
         grid-template-columns: 1fr;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+    }
+
+    .action-buttons button {
+        max-width: none;
     }
 }

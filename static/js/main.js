@@ -97,36 +97,81 @@ function startUpdateGPUInfoLoop() {
 }
 
 function startBenchmark() {
-    const matrixSize = parseInt(document.getElementById('matrix-size').value);
-    const iterations = parseInt(document.getElementById('iterations').value);
-    const memorySize = parseInt(document.getElementById('memory-size').value);
-
-    const requestData = {
-        matrix_size: matrixSize,
-        iterations: iterations,
-        memory_size: memorySize
-    };
+    const matrixSize = document.getElementById('matrix-size').value;
+    const iterations = document.getElementById('iterations').value;
+    const memorySize = document.getElementById('memory-size').value;
+    const benchmarkType = document.getElementById('benchmark-type').value;
 
     fetch('/start_benchmark', {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify({
+            matrix_size: parseInt(matrixSize),
+            iterations: parseInt(iterations),
+            memory_size: parseInt(memorySize),
+            benchmark_type: benchmarkType
+        })
     })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert(data.error);
-                return;
-            }
-
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert(data.error);
+        } else {
             document.getElementById('start-btn').disabled = true;
+            document.getElementById('start-cuda-btn').disabled = true;
             document.getElementById('progress-section').style.display = 'block';
-            document.getElementById('results-grid').innerHTML = '';
+            document.getElementById('results-section').innerHTML = '';
 
-            benchmarkInterval = setInterval(updateBenchmarkStatus, 1000);
-        });
+            // ベンチマーク状況を監視
+            benchmarkInterval = setInterval(checkBenchmarkStatus, 1000);
+        }
+    })
+    .catch(error => {
+        alert('エラーが発生しました: ' + error);
+    });
+}
+
+function startCudaBenchmark() {
+    const matrixSize = document.getElementById('matrix-size').value;
+    const iterations = document.getElementById('iterations').value;
+    const benchmarkType = document.getElementById('benchmark-type').value;
+
+    // WMMA requires matrix size to be multiple of 16
+    if (benchmarkType === 'wmma' && parseInt(matrixSize) % 16 !== 0) {
+        alert('WMMAベンチマークには16の倍数の行列サイズが必要です');
+        return;
+    }
+
+    fetch('/start_cuda_benchmark', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            matrix_size: parseInt(matrixSize),
+            iterations: parseInt(iterations),
+            benchmark_type: benchmarkType
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert(data.error);
+        } else {
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('start-cuda-btn').disabled = true;
+            document.getElementById('progress-section').style.display = 'block';
+            document.getElementById('results-section').innerHTML = '';
+
+            // ベンチマーク状況を監視
+            benchmarkInterval = setInterval(checkBenchmarkStatus, 1000);
+        }
+    })
+    .catch(error => {
+        alert('エラーが発生しました: ' + error);
+    });
 }
 
 function setPreset(preset) {
@@ -174,7 +219,7 @@ function cleanupGPUMemory() {
         });
 }
 
-function updateBenchmarkStatus() {
+function checkBenchmarkStatus() {
     fetch('/benchmark_status')
         .then(response => response.json())
         .then(data => {
@@ -184,6 +229,7 @@ function updateBenchmarkStatus() {
             if (!data.is_running) {
                 clearInterval(benchmarkInterval);
                 document.getElementById('start-btn').disabled = false;
+                document.getElementById('start-cuda-btn').disabled = false;
                 document.getElementById('progress-section').style.display = 'none';
                 displayResults(data.results);
             }
@@ -193,6 +239,14 @@ function updateBenchmarkStatus() {
 function displayResults(results) {
     let html = '';
 
+    // Check if this is CUDA C++ benchmark results
+    if (results.success !== undefined) {
+        // CUDA C++ benchmark results
+        displayCudaCppResults(results);
+        return;
+    }
+
+    // Traditional benchmark results
     for (const [testName, result] of Object.entries(results)) {
         if (typeof result === 'string') {
             html += `
@@ -225,6 +279,85 @@ function displayResults(results) {
             html += '</div>';
         }
     }
+
+    document.getElementById('results-grid').innerHTML = html;
+}
+
+function displayCudaCppResults(results) {
+    if (!results.success) {
+        document.getElementById('results-grid').innerHTML = `
+            <div class="result-card">
+                <h3>エラー</h3>
+                <p class="error">${results.error_message}</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '<h2>CUDA C++ ベンチマーク結果</h2>';
+
+    // Create results table
+    html += '<div class="result-card"><h3>実行時間 (ms)</h3><table class="results-table">';
+    html += '<tr><th>ベンチマーク</th><th>時間 (ms)</th><th>相対性能</th></tr>';
+
+    const benchmarks = [
+        { name: 'CPU シングルコア', key: 'cpu_single_core_ms', baseline: true },
+        { name: 'CPU 最適化', key: 'cpu_optimized_ms' },
+        { name: 'CPU OpenBLAS', key: 'cpu_openblas_ms' },
+        { name: 'CUDA ナイーブ', key: 'cuda_naive_ms' },
+        { name: 'cuBLAS', key: 'cublas_ms' },
+        { name: 'cuBLAS + Tensor Core', key: 'cublas_tensorcore_ms' },
+        { name: 'WMMA Tensor Core', key: 'wmma_ms' }
+    ];
+
+    const baseline = results.cpu_single_core_ms || results.cuda_naive_ms || 1;
+
+    benchmarks.forEach(benchmark => {
+        const time = results[benchmark.key];
+        if (time > 0) {
+            const speedup = baseline / time;
+            const speedupText = benchmark.baseline ? '1.0x (基準)' : `${speedup.toFixed(2)}x`;
+            const rowClass = time === Math.min(...benchmarks.map(b => results[b.key]).filter(t => t > 0)) ? 'best-result' : '';
+
+            html += `<tr class="${rowClass}">
+                <td>${benchmark.name}</td>
+                <td>${time.toFixed(3)}</td>
+                <td>${speedupText}</td>
+            </tr>`;
+        }
+    });
+
+    html += '</table></div>';
+
+    // Add speedup analysis if available
+    if (results.speedup_analysis && Object.keys(results.speedup_analysis).length > 0) {
+        html += '<div class="result-card"><h3>性能比較分析</h3>';
+        html += '<table class="results-table">';
+        html += '<tr><th>比較</th><th>倍率</th></tr>';
+
+        for (const [comparison, ratio] of Object.entries(results.speedup_analysis)) {
+            const displayName = comparison
+                .replace(/_/g, ' ')
+                .replace(/vs/g, 'vs')
+                .replace(/cpu single/g, 'CPU単体')
+                .replace(/cpu optimized/g, 'CPU最適化')
+                .replace(/cpu openblas/g, 'OpenBLAS')
+                .replace(/cuda naive/g, 'CUDA基本')
+                .replace(/cublas tc/g, 'cuBLAS+TC')
+                .replace(/cublas/g, 'cuBLAS')
+                .replace(/wmma/g, 'WMMA');
+
+            html += `<tr><td>${displayName}</td><td>${ratio.toFixed(2)}x</td></tr>`;
+        }
+        html += '</table></div>';
+    }
+
+    // Add test parameters
+    html += `<div class="result-card">
+        <h3>テスト条件</h3>
+        <p>行列サイズ: ${results.matrix_size} x ${results.matrix_size}</p>
+        <p>実行回数: ${results.iterations}</p>
+    </div>`;
 
     document.getElementById('results-grid').innerHTML = html;
 }
